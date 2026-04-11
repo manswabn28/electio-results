@@ -118,3 +118,9 @@ export type PartySummaryResponse = {
   sourceUrl: string;
   parties: PartySeatSummary[];
 };
+
+export type TrafficResponse = {
+  generatedAt: string;
+  watchingNow: number;
+  totalViews: number;
+};

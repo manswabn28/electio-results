@@ -4,7 +4,8 @@ import type {
   PartySummaryResponse,
   PublicSourceConfig,
   ResultEnvelope,
-  ResultsSummaryResponse
+  ResultsSummaryResponse,
+  TrafficResponse
 } from "@kerala-election/shared";
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -51,6 +52,14 @@ export function fetchSourceConfig() {
 
 export function fetchPartySummary() {
   return request<PartySummaryResponse>(apiUrl("/api/party-summary"));
+}
+
+export function sendTrafficHeartbeat(viewerId: string) {
+  return request<TrafficResponse>(apiUrl("/api/traffic/heartbeat"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ viewerId })
+  });
 }
 
 export function updateSourceConfig(

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export function useLocalStorageState<T>(key: string, fallback: T) {
+export function useLocalStorageState<T>(key: string, fallback: T | (() => T)) {
   const [value, setValue] = useState<T>(() => {
     const stored = localStorage.getItem(key);
-    if (!stored) return fallback;
+    const fallbackValue = typeof fallback === "function" ? (fallback as () => T)() : fallback;
+    if (!stored) return fallbackValue;
     try {
       return JSON.parse(stored) as T;
     } catch {
-      return fallback;
+      return fallbackValue;
     }
   });
 

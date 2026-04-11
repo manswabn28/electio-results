@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, Bell, ChevronLeft, ChevronRight, Download, History, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, ChevronLeft, ChevronRight, Download, Eye, History, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users } from "lucide-react";
 import type { ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
-import { fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, updateSourceConfig } from "./api";
+import { fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
+const VIEWER_ID_STORAGE_KEY = "kerala-election:viewer-id";
 
 type LeaderHistoryEntry = {
   at: number;
@@ -47,6 +48,7 @@ export function App() {
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
   const [alertThreshold, setAlertThreshold] = useLocalStorageState<number>("kerala-election:alert-threshold", 1000);
   const [seenWinnerIds, setSeenWinnerIds] = useLocalStorageState<string[]>("kerala-election:seen-winner-notifications", []);
+  const [viewerId] = useLocalStorageState<string>(VIEWER_ID_STORAGE_KEY, () => crypto.randomUUID());
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
 
@@ -134,6 +136,12 @@ export function App() {
   const sourceConfigQuery = useQuery({
     queryKey: ["source-config"],
     queryFn: fetchSourceConfig
+  });
+
+  const trafficQuery = useQuery({
+    queryKey: ["traffic", viewerId],
+    queryFn: () => sendTrafficHeartbeat(viewerId),
+    refetchInterval: 30_000
   });
 
   useEffect(() => {
@@ -370,7 +378,7 @@ export function App() {
   return (
     <main className="min-h-screen">
       {!watchMode && <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Official ECI Source</p>
@@ -413,7 +421,7 @@ export function App() {
         </div>
       </section>}
 
-      <section className={`${watchMode ? "mx-auto max-w-[1800px] px-4 py-4 sm:px-6 lg:px-8" : "mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8"}`}>
+      <section className={`${watchMode ? "mx-auto w-full max-w-[2400px] px-4 py-4 sm:px-6 lg:px-8" : "mx-auto w-full max-w-[2200px] px-4 py-6 sm:px-6 lg:px-8"}`}>
         {watchMode && (
           <button
             className="fixed right-4 top-4 z-50 rounded-full border border-zinc-200 bg-white p-3 text-zinc-700 shadow-lg hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
@@ -447,7 +455,7 @@ export function App() {
           </div>
         )}
 
-        <div className={watchMode ? "block" : `grid gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_1fr]" : "lg:grid-cols-[260px_1fr]"}`}>
+        <div className={watchMode ? "block" : `grid gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
           {!watchMode && <aside className="order-2 space-y-4 lg:order-none lg:col-start-1 lg:row-start-1">
             <ConstituencySelector
               options={constituenciesQuery.data?.constituencies ?? []}
@@ -459,7 +467,10 @@ export function App() {
             />
           </aside>}
 
-          <div className={watchMode ? "grid content-start gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "order-1 grid content-start gap-4 md:grid-cols-2 xl:grid-cols-3 lg:col-start-2 lg:row-span-2 lg:row-start-1"}>
+          <div
+            className={watchMode ? "grid content-start gap-4" : "order-1 grid content-start gap-4 lg:col-start-2 lg:row-span-2 lg:row-start-1"}
+            style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${watchMode ? "360px" : "320px"}), 1fr))` }}
+          >
             {selectedIds.length === 0 && <EmptyState />}
             {selectedOptions.map((option, index) => {
               const query = resultQueries[index];
@@ -570,7 +581,7 @@ export function App() {
           )}
         </div>
       </section>
-      <PartySummaryDock parties={partySummaryQuery.data?.parties ?? []} checkedAt={partySummaryQuery.dataUpdatedAt} />
+      <PartySummaryDock parties={partySummaryQuery.data?.parties ?? []} checkedAt={partySummaryQuery.dataUpdatedAt} traffic={trafficQuery.data} />
       {toast && (
         <div className="fixed right-4 top-4 z-[60] max-w-sm rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-lg dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100">
           {toast}
@@ -908,22 +919,26 @@ function SourceConfigPanel({
 
 function PartySummaryDock({
   parties,
-  checkedAt
+  checkedAt,
+  traffic
 }: {
   parties: { party: string; won: number; leading: number; total: number; color?: string }[];
   checkedAt?: number;
+  traffic?: { watchingNow: number; totalViews: number };
 }) {
-  if (!parties.length) return null;
+  if (!parties.length && !traffic) return null;
   const visibleParties = parties.slice(0, 8);
   const totalSeats = parties.reduce((sum, party) => sum + party.total, 0);
 
   return (
     <div key={checkedAt ?? 0} className="animate-summary-refresh fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white/95 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
-      <div className="mx-auto flex max-w-7xl items-center gap-3 overflow-x-auto px-4 py-2 sm:px-6 lg:px-8">
-        <div className="shrink-0 pr-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Seats</div>
-          <div className="text-sm font-black text-zinc-950 dark:text-white">{formatNumber(totalSeats)}</div>
-        </div>
+      <div className="mx-auto flex max-w-7xl items-center gap-3 overflow-x-auto px-4 py-2 pr-28 sm:px-6 sm:pr-32 lg:px-8">
+        {parties.length > 0 && (
+          <div className="shrink-0 pr-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Seats</div>
+            <div className="text-sm font-black text-zinc-950 dark:text-white">{formatNumber(totalSeats)}</div>
+          </div>
+        )}
         {visibleParties.map((party) => (
           <div
             key={`${party.party}-${checkedAt ?? 0}`}
@@ -941,6 +956,18 @@ function PartySummaryDock({
           </div>
         ))}
       </div>
+      {traffic && (
+        <div className="absolute bottom-2 right-3 flex items-center gap-3 rounded-md border border-zinc-200 bg-white/95 px-3 py-2 text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-300">
+          <span className="inline-flex items-center gap-1 text-xs font-black" title="Watching now">
+            <Users className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-300" />
+            {formatNumber(traffic.watchingNow)}
+          </span>
+          <span className="inline-flex items-center gap-1 text-xs font-black" title="Total views">
+            <Eye className="h-3.5 w-3.5 text-sky-700 dark:text-sky-300" />
+            {formatNumber(traffic.totalViews)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

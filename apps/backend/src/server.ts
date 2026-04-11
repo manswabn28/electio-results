@@ -12,6 +12,7 @@ const allowedOrigins = new Set(
   [
     "https://kerala-election.onrender.com",
     "http://localhost:5173",
+    "http://localhost:5174",
     ...config.FRONTEND_ORIGIN.split(",")
   ]
     .map((origin) => origin.trim().replace(/\/+$/, ""))
