@@ -1,6 +1,6 @@
 import type { Request, Response, Router } from "express";
 import express from "express";
-import { clearElectionCache, getConstituencies, getConstituencyResult, getPartySummary, getSummary } from "./eci/service.js";
+import { clearElectionCache, getCandidateIndex, getConstituencies, getConstituencyResult, getPartySummary, getSummary } from "./eci/service.js";
 import { getSourceConfig, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
 import { recordViewer } from "./traffic.js";
 
@@ -34,6 +34,10 @@ export function createApiRouter(): Router {
 
   router.get("/constituencies", asyncHandler(async (_req, res) => {
     res.json(await getConstituencies());
+  }));
+
+  router.get("/candidates", asyncHandler(async (_req, res) => {
+    res.json(await getCandidateIndex());
   }));
 
   router.get("/results/summary", asyncHandler(async (req, res) => {

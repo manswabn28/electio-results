@@ -48,6 +48,16 @@ export type ConstituencyOption = {
   isFavoriteDefault?: boolean;
 };
 
+export type CandidateOption = {
+  candidateId: string;
+  candidateName: string;
+  party: string;
+  photoUrl?: string;
+  constituencyId: string;
+  constituencyName: string;
+  constituencyNumber: string;
+};
+
 export type ResultsSummaryResponse = {
   generatedAt: string;
   sourceConfigured: boolean;
@@ -62,6 +72,14 @@ export type ConstituenciesResponse = {
   sourceUrl?: string;
   constituencies: ConstituencyOption[];
   warning?: string;
+};
+
+export type CandidatesResponse = {
+  generatedAt: string;
+  sourceConfigured: boolean;
+  sourceUrl?: string;
+  candidates: CandidateOption[];
+  errors: ApiError[];
 };
 
 export type ApiError = {

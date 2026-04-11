@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
-import { fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
+import type { CandidateOption, ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
+import { fetchCandidates, fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 
@@ -56,6 +56,7 @@ export function App() {
   const [autoScroll, setAutoScroll] = useLocalStorageState<boolean>("kerala-election:auto-scroll", false);
   const [pinnedIds, setPinnedIds] = useLocalStorageState<string[]>("kerala-election:pinned-constituencies", []);
   const [partyFilter, setPartyFilter] = useLocalStorageState<string>("kerala-election:party-filter", "all");
+  const [watchedCandidateIds, setWatchedCandidateIds] = useLocalStorageState<string[]>("kerala-election:watched-candidates", []);
   const [lastChangedAt, setLastChangedAt] = useLocalStorageState<Record<string, number>>("kerala-election:last-changed-at", {});
   const [cachedResults, setCachedResults] = useLocalStorageState<Record<string, ConstituencyResult>>(CACHED_RESULTS_KEY, {});
   const [lastCheckedById, setLastCheckedById] = useLocalStorageState<Record<string, number>>("kerala-election:last-checked-by-id", {});
@@ -153,6 +154,12 @@ export function App() {
     queryFn: fetchConstituencies
   });
 
+  const candidatesQuery = useQuery({
+    queryKey: ["candidates"],
+    queryFn: fetchCandidates,
+    staleTime: Infinity
+  });
+
   const sourceConfigQuery = useQuery({
     queryKey: ["source-config"],
     queryFn: fetchSourceConfig
@@ -178,6 +185,11 @@ export function App() {
     const byId = new Map(options.map((option) => [option.constituencyId, option]));
     return selectedIds.map((id) => byId.get(id)).filter(Boolean) as ConstituencyOption[];
   }, [constituenciesQuery.data?.constituencies, selectedIds]);
+
+  const watchedCandidates = useMemo(() => {
+    const byId = new Map((candidatesQuery.data?.candidates ?? []).map((candidate) => [candidate.candidateId, candidate]));
+    return watchedCandidateIds.map((id) => byId.get(id)).filter(Boolean) as CandidateOption[];
+  }, [candidatesQuery.data?.candidates, watchedCandidateIds]);
 
   const summaryQuery = useQuery({
     queryKey: ["summary", selectedIds],
@@ -533,6 +545,18 @@ export function App() {
               collapsed={sidebarCollapsed}
               onCollapsedChange={setSidebarCollapsed}
             />
+            {!sidebarCollapsed && (
+              <CandidateWatchlist
+                candidates={candidatesQuery.data?.candidates ?? []}
+                watchedCandidates={watchedCandidates}
+                isLoading={candidatesQuery.isLoading || candidatesQuery.isFetching}
+                onSelect={(candidate) => {
+                  setWatchedCandidateIds((current) => current.includes(candidate.candidateId) ? current : [...current, candidate.candidateId]);
+                  setSelectedIds((current) => current.includes(candidate.constituencyId) ? current : [...current, candidate.constituencyId]);
+                }}
+                onRemove={(candidateId) => setWatchedCandidateIds((current) => current.filter((id) => id !== candidateId))}
+              />
+            )}
           </aside>}
 
           <div
@@ -637,6 +661,7 @@ export function App() {
                   void queryClient.invalidateQueries({ queryKey: ["summary"] });
                   void queryClient.invalidateQueries({ queryKey: ["result"] });
                   void queryClient.invalidateQueries({ queryKey: ["party-summary"] });
+                  void queryClient.invalidateQueries({ queryKey: ["candidates"] });
                 }}
               />
             </div>
@@ -845,6 +870,89 @@ function LiveAudioPlayer({
         <p className="mt-2 text-[10px] font-semibold leading-4 text-zinc-500">
           Minimize keeps audio alive. Stop closes the player.
         </p>
+      )}
+    </div>
+  );
+}
+
+function CandidateWatchlist({
+  candidates,
+  watchedCandidates,
+  isLoading,
+  onSelect,
+  onRemove
+}: {
+  candidates: CandidateOption[];
+  watchedCandidates: CandidateOption[];
+  isLoading: boolean;
+  onSelect: (candidate: CandidateOption) => void;
+  onRemove: (candidateId: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const watchedIds = new Set(watchedCandidates.map((candidate) => candidate.candidateId));
+  const matches = search.trim().length < 2
+    ? []
+    : candidates
+        .filter((candidate) => !watchedIds.has(candidate.candidateId))
+        .filter((candidate) =>
+          `${candidate.candidateName} ${candidate.party} ${candidate.constituencyName} ${candidate.constituencyNumber}`.toLowerCase().includes(search.toLowerCase())
+        )
+        .slice(0, 8);
+
+  return (
+    <div className="panel rounded-md p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-bold text-zinc-950 dark:text-white">Candidate Watch</h2>
+        <span className="text-xs font-bold text-zinc-500">{watchedCandidates.length}</span>
+      </div>
+      <div className="relative mt-3">
+        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
+        <input
+          className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-9 pr-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          placeholder={isLoading ? "Loading candidates..." : "Search candidate"}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
+      {watchedCandidates.length > 0 && (
+        <div className="mt-3 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+          {watchedCandidates.map((candidate) => (
+            <button
+              key={candidate.candidateId}
+              className="rounded-md bg-sky-100 px-2 py-1 text-xs font-bold text-sky-900 dark:bg-sky-900 dark:text-sky-100"
+              onClick={() => onRemove(candidate.candidateId)}
+              title={`Remove ${candidate.candidateName}`}
+            >
+              {candidate.candidateName} ×
+            </button>
+          ))}
+        </div>
+      )}
+      {search.trim().length >= 2 && (
+        <div className="mt-2 max-h-56 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+          {isLoading && <div className="p-3 text-sm text-zinc-500">Building candidate list once...</div>}
+          {!isLoading && matches.length === 0 && <div className="p-3 text-sm text-zinc-500">No candidate found.</div>}
+          {matches.map((candidate) => (
+            <button
+              key={candidate.candidateId}
+              className="block w-full border-b border-zinc-100 px-3 py-2 text-left last:border-b-0 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:bg-zinc-900"
+              onClick={() => {
+                onSelect(candidate);
+                setSearch("");
+              }}
+            >
+              <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
+              <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
+                {shortPartyName(candidate.party)} · {candidate.constituencyName} ({candidate.constituencyNumber})
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {candidates.length > 0 && (
+        <div className="mt-2 text-[10px] font-semibold text-zinc-500">
+          {formatNumber(candidates.length)} candidates indexed.
+        </div>
       )}
     </div>
   );

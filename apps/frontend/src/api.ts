@@ -1,4 +1,5 @@
 import type {
+  CandidatesResponse,
   ConstituenciesResponse,
   ConstituencyResult,
   PartySummaryResponse,
@@ -34,6 +35,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function fetchConstituencies() {
   return request<ConstituenciesResponse>(apiUrl("/api/constituencies"));
+}
+
+export function fetchCandidates() {
+  return request<CandidatesResponse>(apiUrl("/api/candidates"));
 }
 
 export function fetchSummary(ids: string[]) {

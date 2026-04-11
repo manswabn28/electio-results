@@ -1,4 +1,6 @@
 import type {
+  CandidateOption,
+  CandidatesResponse,
   ConstituenciesResponse,
   ConstituencyResult,
   ConstituencySummary,
@@ -20,6 +22,13 @@ import {
 import { buildCandidateDetailUrl, getSourceConfig, resolveConfiguredUrl } from "../sourceConfigStore.js";
 
 const cache = new TtlCache<unknown>(config.CACHE_TTL_SECONDS * 1000);
+let candidateIndex:
+  | {
+      sourceKey: string;
+      response: CandidatesResponse;
+    }
+  | undefined;
+let candidateIndexPromise: Promise<CandidatesResponse> | undefined;
 
 async function getKeralaStatePageUrl(): Promise<string | undefined> {
   const cacheKey = "kerala-state-page-url";
@@ -111,6 +120,69 @@ export async function getConstituencies(): Promise<ConstituenciesResponse> {
   };
 }
 
+export async function getCandidateIndex(): Promise<CandidatesResponse> {
+  const sourceConfig = await getSourceConfig();
+  const sourceKey = `${sourceConfig.updatedAt}|${sourceConfig.constituencyListUrl}|${sourceConfig.candidateDetailUrlTemplate}`;
+  if (candidateIndex?.sourceKey === sourceKey) return candidateIndex.response;
+  if (candidateIndexPromise) return candidateIndexPromise;
+
+  candidateIndexPromise = buildCandidateIndex(sourceKey).finally(() => {
+    candidateIndexPromise = undefined;
+  });
+
+  return candidateIndexPromise;
+}
+
+async function buildCandidateIndex(sourceKey: string): Promise<CandidatesResponse> {
+  const { sourceUrl, summaries, error } = await getStateSummaries();
+  if (!sourceUrl) {
+    return {
+      generatedAt: new Date().toISOString(),
+      sourceConfigured: false,
+      sourceUrl,
+      candidates: [],
+      errors: [{ message: error ?? "Live ECI source is not configured yet.", code: "SOURCE_NOT_CONFIGURED" }]
+    };
+  }
+
+  const candidates: CandidateOption[] = [];
+  const errors: { constituencyId?: string; message: string; code?: string }[] = [];
+
+  for (const summary of summaries.filter((item) => item.sourceUrl)) {
+    try {
+      const result = await getConstituencyResult(summary.constituencyId);
+      for (const candidate of result.candidates) {
+        candidates.push({
+          candidateId: `${summary.constituencyId}:${candidate.serialNo}:${normalizeComparable(candidate.candidateName)}`,
+          candidateName: candidate.candidateName,
+          party: candidate.party,
+          photoUrl: candidate.photoUrl,
+          constituencyId: summary.constituencyId,
+          constituencyName: summary.constituencyName,
+          constituencyNumber: summary.constituencyNumber
+        });
+      }
+    } catch (candidateError) {
+      errors.push({
+        constituencyId: summary.constituencyId,
+        message: candidateError instanceof Error ? candidateError.message : "Failed to load candidate list.",
+        code: "CANDIDATE_INDEX_PARTIAL"
+      });
+    }
+  }
+
+  const response = {
+    generatedAt: new Date().toISOString(),
+    sourceConfigured: true,
+    sourceUrl,
+    candidates,
+    errors
+  };
+  candidateIndex = { sourceKey, response };
+  logger.info({ candidates: candidates.length, errors: errors.length }, "Candidate index built");
+  return response;
+}
+
 export async function getSummary(ids: string[]): Promise<ResultsSummaryResponse> {
   const { sourceUrl, summaries, error } = await getStateSummaries();
   const requested = filterRequested(summaries, ids);
@@ -196,6 +268,8 @@ export async function getPartySummary(): Promise<PartySummaryResponse> {
 
 export function clearElectionCache(): void {
   cache.clear();
+  candidateIndex = undefined;
+  candidateIndexPromise = undefined;
 }
 
 function filterRequested(summaries: ConstituencySummary[], ids: string[]): ConstituencySummary[] {
