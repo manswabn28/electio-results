@@ -1,0 +1,22 @@
+{
+  "name": "kerala-election-live-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Live Kerala Assembly Election 2026 results dashboard backed by official ECI result pages.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build --workspace @kerala-election/shared && npm run dev:backend",
+    "dev:backend": "npm run build --workspace @kerala-election/shared && npm run dev --workspace @kerala-election/backend",
+    "dev:frontend": "npm run build --workspace @kerala-election/shared && npm run dev --workspace @kerala-election/frontend",
+    "build": "npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/backend && npm run build --workspace @kerala-election/frontend",
+    "typecheck": "npm run build --workspace @kerala-election/shared && npm run typecheck --workspace @kerala-election/backend && npm run typecheck --workspace @kerala-election/frontend",
+    "lint": "npm run lint --workspace @kerala-election/backend && npm run lint --workspace @kerala-election/frontend"
+  },
+  "engines": {
+    "node": ">=20.11.0",
+    "npm": ">=10.0.0"
+  }
+}

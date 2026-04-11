@@ -1,0 +1,8 @@
+{
+  "baseUrl": "https://results.eci.gov.in",
+  "constituencyListUrl": "https://results.eci.gov.in/ResultAcGenNov2025/statewiseS041.htm",
+  "candidateDetailUrlTemplate": "https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm",
+  "refreshIntervalSeconds": 10,
+  "updatedAt": "2026-04-10T23:19:05.149Z",
+  "updatedBy": "admin"
+}
