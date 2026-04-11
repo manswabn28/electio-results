@@ -107,7 +107,7 @@ export function parseStatePage(html: string, statePageUrl: string, defaultFavori
     if (!inferredName || !/^\d{1,3}$/.test(constituencyNumber)) continue;
 
     const summary: ConstituencySummary = {
-      constituencyId: slugify(inferredName),
+      constituencyId: constituencyIdFor(inferredName, constituencyNumber),
       constituencyName: inferredName,
       constituencyNumber: constituencyNumber.padStart(3, "0"),
       statusText: findCell(row.cells, ["won", "leading", "result declared", "counting", "awaited"]),
@@ -161,7 +161,7 @@ export function parseConstituencyPage(
   const inferredNumber = stateSummary?.constituencyNumber || inferConstituencyNumber(sourceUrl, []);
 
   return {
-    constituencyId: stateSummary?.constituencyId || slugify(inferredName),
+    constituencyId: stateSummary?.constituencyId || constituencyIdFor(inferredName, inferredNumber),
     constituencyName: inferredName,
     constituencyNumber: inferredNumber,
     statusText: stateSummary?.statusText || findStatusText(text),
@@ -263,7 +263,7 @@ export function toConstituencyOptions(
     constituencyName: summary.constituencyName,
     constituencyNumber: summary.constituencyNumber,
     sourceUrl: summary.sourceUrl,
-    isFavoriteDefault: defaultFavoriteIds.includes(summary.constituencyId)
+    isFavoriteDefault: defaultFavoriteIds.includes(summary.constituencyId) || defaultFavoriteIds.includes(slugify(summary.constituencyName))
   }));
 }
 
@@ -356,15 +356,20 @@ function mergeWithFallback(
   return [...byComparable.values()]
     .map((summary) => ({
       ...summary,
-      constituencyId: summary.constituencyId || slugify(summary.constituencyName),
+      constituencyId: summary.constituencyId || constituencyIdFor(summary.constituencyName, summary.constituencyNumber),
       constituencyNumber: summary.constituencyNumber || ""
     }))
     .sort((a, b) => toNumber(a.constituencyNumber) - toNumber(b.constituencyNumber) || a.constituencyName.localeCompare(b.constituencyName))
     .map((summary) => ({
       ...summary,
-      constituencyId: summary.constituencyId || slugify(summary.constituencyName),
-      statusText: summary.statusText || (defaultFavoriteIds.includes(summary.constituencyId) ? "Configured favorite" : "")
+      constituencyId: summary.constituencyId || constituencyIdFor(summary.constituencyName, summary.constituencyNumber),
+      statusText: summary.statusText || (defaultFavoriteIds.includes(summary.constituencyId) || defaultFavoriteIds.includes(slugify(summary.constituencyName)) ? "Configured favorite" : "")
     }));
+}
+
+function constituencyIdFor(name: string, number: string): string {
+  const normalizedNumber = String(Number(number) || number).padStart(3, "0");
+  return normalizedNumber ? `${normalizedNumber}-${slugify(name)}` : slugify(name);
 }
 
 function findCell(cells: string[], terms: string[]): string {
@@ -405,7 +410,7 @@ function parseConstituencyLinksAndOptions($: cheerio.CheerioAPI, sourceUrl: stri
     if (!constituencyName || seen.has(`${constituencyNumber}:${constituencyName}`)) return;
     seen.add(`${constituencyNumber}:${constituencyName}`);
     summaries.push({
-      constituencyId: slugify(constituencyName),
+      constituencyId: constituencyIdFor(constituencyName, constituencyNumber),
       constituencyName,
       constituencyNumber,
       statusText: "",
@@ -427,7 +432,7 @@ function parseSingleConstituencySummary($: cheerio.CheerioAPI, sourceUrl: string
   if (!match) return undefined;
   const constituencyName = cleanConstituencyName(match[2]);
   return {
-    constituencyId: slugify(constituencyName),
+    constituencyId: constituencyIdFor(constituencyName, match[1]),
     constituencyName,
     constituencyNumber: match[1].padStart(3, "0"),
     statusText: findStatusText(cleanText($.root().text())),

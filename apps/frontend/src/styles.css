@@ -18,6 +18,11 @@ body {
   padding-bottom: 86px;
 }
 
+body.hide-cursor,
+body.hide-cursor * {
+  cursor: none !important;
+}
+
 .dark body {
   background: #101214;
   color: #f4f4f5;
@@ -82,4 +87,19 @@ select {
 
 .animate-party-card-refresh {
   animation: party-card-refresh-pulse 900ms ease-out;
+}
+
+@keyframes winner-toast-in {
+  0% {
+    opacity: 0;
+    transform: translateX(110%) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) translateY(0);
+  }
+}
+
+.animate-winner-toast {
+  animation: winner-toast-in 260ms ease-out;
 }

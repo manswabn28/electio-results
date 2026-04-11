@@ -1,12 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, Bell, ChevronLeft, ChevronRight, Download, Lock, Maximize2, Minimize2, Moon, Play, RefreshCw, Search, Settings, Star, Sun } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, ChevronLeft, ChevronRight, Download, History, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun } from "lucide-react";
 import type { ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
 import { fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
+const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
+
+type LeaderHistoryEntry = {
+  at: number;
+  leader: string;
+  party: string;
+  margin: number;
+  status: string;
+};
+
+type WinnerNotification = {
+  id: string;
+  constituencyName: string;
+  candidateName: string;
+  party: string;
+  photoUrl?: string;
+  totalVotes: number;
+  margin: number;
+};
 
 export function App() {
   const queryClient = useQueryClient();
@@ -23,6 +42,13 @@ export function App() {
   const [pinnedIds, setPinnedIds] = useLocalStorageState<string[]>("kerala-election:pinned-constituencies", []);
   const [partyFilter, setPartyFilter] = useLocalStorageState<string>("kerala-election:party-filter", "all");
   const [lastChangedAt, setLastChangedAt] = useLocalStorageState<Record<string, number>>("kerala-election:last-changed-at", {});
+  const [cachedResults, setCachedResults] = useLocalStorageState<Record<string, ConstituencyResult>>(CACHED_RESULTS_KEY, {});
+  const [leaderHistory, setLeaderHistory] = useLocalStorageState<Record<string, LeaderHistoryEntry[]>>("kerala-election:leader-history", {});
+  const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
+  const [alertThreshold, setAlertThreshold] = useLocalStorageState<number>("kerala-election:alert-threshold", 1000);
+  const [seenWinnerIds, setSeenWinnerIds] = useLocalStorageState<string[]>("kerala-election:seen-winner-notifications", []);
+  const [toast, setToast] = useState("");
+  const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -68,6 +94,38 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [autoScroll, watchMode]);
 
+  useEffect(() => {
+    if (!watchMode) return;
+    let hideTimer = 0;
+    const showCursor = () => {
+      document.body.classList.remove("hide-cursor");
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => document.body.classList.add("hide-cursor"), 2500);
+    };
+    showCursor();
+    window.addEventListener("mousemove", showCursor);
+    window.addEventListener("keydown", showCursor);
+    return () => {
+      window.clearTimeout(hideTimer);
+      document.body.classList.remove("hide-cursor");
+      window.removeEventListener("mousemove", showCursor);
+      window.removeEventListener("keydown", showCursor);
+    };
+  }, [watchMode]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const seats = params.get("seats");
+    if (seats && localStorage.getItem(SELECTED_STORAGE_KEY) === null) {
+      setSelectedIds(seats.split(",").map((seat) => seat.trim()).filter(Boolean));
+      setHasBootstrappedFavorites(true);
+    }
+    const filter = params.get("filter");
+    if (filter) setPartyFilter(filter);
+    const sort = params.get("sort") as SortMode | null;
+    if (sort && ["selected", "marginAsc", "marginDesc", "leader"].includes(sort)) setSortMode(sort);
+  }, [setPartyFilter, setSelectedIds, setSortMode]);
+
   const constituenciesQuery = useQuery({
     queryKey: ["constituencies"],
     queryFn: fetchConstituencies
@@ -101,6 +159,13 @@ export function App() {
 
   const refreshMs = Math.max(5, sourceConfigQuery.data?.refreshIntervalSeconds ?? 30) * 1000;
 
+  const allSummaryQuery = useQuery({
+    queryKey: ["summary", "all-winner-watch", constituenciesQuery.data?.constituencies.map((item) => item.constituencyId).join(",") ?? ""],
+    queryFn: () => fetchSummary(constituenciesQuery.data?.constituencies.map((item) => item.constituencyId) ?? []),
+    enabled: Boolean(constituenciesQuery.data?.constituencies.length),
+    refetchInterval: refreshMs
+  });
+
   const partySummaryQuery = useQuery({
     queryKey: ["party-summary"],
     queryFn: fetchPartySummary,
@@ -116,14 +181,21 @@ export function App() {
     }))
   });
 
-  const isFetching = constituenciesQuery.isFetching || summaryQuery.isFetching || resultQueries.some((query) => query.isFetching);
+  const isFetching = constituenciesQuery.isFetching || summaryQuery.isFetching || allSummaryQuery.isFetching || resultQueries.some((query) => query.isFetching);
   const lastSuccessAt = latestDataUpdatedAt(resultQueries.map((query) => query.dataUpdatedAt));
   const countdown = useCountdown(refreshMs, lastSuccessAt);
 
-  const results = useMemo(
+  const liveResults = useMemo(
     () => resultQueries.map((query) => query.data).filter(Boolean) as ConstituencyResult[],
     [resultQueries]
   );
+  const results = useMemo(() => {
+    const liveById = new Map(liveResults.map((result) => [result.constituencyId, result]));
+    return selectedIds
+      .map((id) => liveById.get(id) ?? cachedResults[id])
+      .filter(Boolean) as ConstituencyResult[];
+  }, [cachedResults, liveResults, selectedIds]);
+  const liveResultIds = useMemo(() => new Set(liveResults.map((result) => result.constituencyId)), [liveResults]);
   const previousResults = usePreviousMap(results);
   const leaderChanges = useMemo(() => {
     return results.filter((result) => {
@@ -135,6 +207,66 @@ export function App() {
   useEffect(() => {
     if (soundEnabled && leaderChanges.length) playLeaderAlert();
   }, [leaderChanges.length, soundEnabled]);
+
+  useEffect(() => {
+    if (!liveResults.length) return;
+    setCachedResults((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const result of liveResults) {
+        if (current[result.constituencyId] === result) continue;
+        next[result.constituencyId] = result;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [liveResults, setCachedResults]);
+
+  useEffect(() => {
+    const summaries = allSummaryQuery.data?.results ?? [];
+    if (!summaries.length) return;
+
+    const declared = summaries.filter((summary) => isDeclaredWinner(summary.statusText || summary.roundStatus));
+    if (!declared.length) return;
+
+    if (!seenWinnerIds.length) {
+      setSeenWinnerIds(declared.map((summary) => summary.constituencyId));
+      return;
+    }
+
+    const newWinners = declared.filter((summary) => !seenWinnerIds.includes(summary.constituencyId)).slice(0, 4);
+    if (!newWinners.length) return;
+
+    setSeenWinnerIds((current) => [...new Set([...current, ...newWinners.map((winner) => winner.constituencyId)])]);
+    newWinners.forEach((nextWinner, index) => {
+      window.setTimeout(() => {
+        void fetchResult(nextWinner.constituencyId)
+          .then((result) => {
+            const winner = result.candidates[0];
+            addWinnerToast({
+              id: result.constituencyId,
+              constituencyName: result.constituencyName,
+              candidateName: result.leadingCandidate || winner?.candidateName || nextWinner.leadingCandidate || "-",
+              party: result.leadingParty || winner?.party || nextWinner.leadingParty || "-",
+              photoUrl: winner?.photoUrl,
+              totalVotes: winner?.totalVotes ?? 0,
+              margin: result.margin || nextWinner.margin || 0
+            });
+            if (soundEnabled) playLeaderAlert();
+          })
+          .catch(() => {
+            addWinnerToast({
+              id: nextWinner.constituencyId,
+              constituencyName: nextWinner.constituencyName,
+              candidateName: nextWinner.leadingCandidate || "-",
+              party: nextWinner.leadingParty || "-",
+              totalVotes: 0,
+              margin: nextWinner.margin || 0
+            });
+          });
+      }, index * 4500);
+    });
+  }, [allSummaryQuery.data?.results, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
 
   useEffect(() => {
     if (!results.length) return;
@@ -156,7 +288,31 @@ export function App() {
       ...current,
       ...Object.fromEntries(changedEntries.map((result) => [result.constituencyId, now]))
     }));
-  }, [previousResults, results, setLastChangedAt]);
+    setLeaderHistory((current) => {
+      const next = { ...current };
+      for (const result of changedEntries) {
+        const entry: LeaderHistoryEntry = {
+          at: now,
+          leader: result.leadingCandidate || result.candidates[0]?.candidateName || "-",
+          party: result.leadingParty || result.candidates[0]?.party || "-",
+          margin: result.margin,
+          status: result.statusText || result.roundStatus || "Counting"
+        };
+        next[result.constituencyId] = [entry, ...(next[result.constituencyId] ?? [])].slice(0, 5);
+      }
+      return next;
+    });
+    const urgent = changedEntries.find((result) => {
+      const previous = previousResults.get(result.constituencyId);
+      const statusChanged = previous && (previous.statusText || previous.roundStatus) !== (result.statusText || result.roundStatus);
+      const closeNow = result.margin <= alertThreshold;
+      return result.leadingCandidate !== previous?.leadingCandidate || statusChanged || closeNow;
+    });
+    if (urgent) {
+      setToast(`${urgent.constituencyName}: ${urgent.leadingCandidate || urgent.candidates[0]?.candidateName || "Leader"} leads by ${formatNumber(urgent.margin)}.`);
+      window.setTimeout(() => setToast(""), 5000);
+    }
+  }, [alertThreshold, previousResults, results, setLastChangedAt, setLeaderHistory]);
 
   const partyOptions = useMemo(() => {
     return [...new Set(results.map((result) => result.leadingParty || result.candidates[0]?.party).filter(Boolean))].sort();
@@ -183,10 +339,29 @@ export function App() {
   const togglePinned = (id: string) => {
     setPinnedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
+  const addWinnerToast = (winner: WinnerNotification) => {
+    setWinnerToasts((current) => [...current.filter((item) => item.id !== winner.id), winner].slice(-5));
+    window.setTimeout(() => {
+      setWinnerToasts((current) => current.filter((item) => item.id !== winner.id));
+    }, 12000);
+  };
+  const shareView = async () => {
+    const params = new URLSearchParams();
+    if (selectedIds.length) params.set("seats", selectedIds.join(","));
+    if (partyFilter !== "all") params.set("filter", partyFilter);
+    if (sortMode !== "selected") params.set("sort", sortMode);
+    const url = `${window.location.origin}${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    await navigator.clipboard?.writeText(url).catch(() => undefined);
+    window.history.replaceState(null, "", url);
+    setToast("Share link copied for this view.");
+    window.setTimeout(() => setToast(""), 3500);
+  };
   const manualRefresh = () => {
     if (isFetching) return;
     if (resultQueries.length) {
       resultQueries.forEach((query) => void query.refetch());
+      void partySummaryQuery.refetch();
+      void allSummaryQuery.refetch();
     } else {
       void constituenciesQuery.refetch();
     }
@@ -314,6 +489,10 @@ export function App() {
                 onTogglePin={() => togglePinned(result.constituencyId)}
                 changedAt={lastChangedAt[result.constituencyId]}
                 leaderChanged={leaderChanges.some((item) => item.constituencyId === result.constituencyId)}
+                history={leaderHistory[result.constituencyId] ?? []}
+                note={constituencyNotes[result.constituencyId] ?? ""}
+                onNoteChange={(note) => setConstituencyNotes((current) => ({ ...current, [result.constituencyId]: note }))}
+                isLastKnown={!liveResultIds.has(result.constituencyId)}
               />
             ))}
           </div>
@@ -332,7 +511,7 @@ export function App() {
                   <option value="marginDesc">Largest leads first</option>
                   <option value="leader">Leading candidate</option>
                 </select>
-                <label className="mt-3 block text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="party-filter">Filter</label>
+                <label className="mt-3 block text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="party-filter">Watch group</label>
                 <select
                   id="party-filter"
                   className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
@@ -353,6 +532,22 @@ export function App() {
                   <button className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => downloadCsv(results)} disabled={!results.length}>
                     <Download className="mr-2 inline h-4 w-4" />
                     CSV
+                  </button>
+                </div>
+                <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                  <label className="sr-only" htmlFor="alert-threshold">Close alert margin</label>
+                  <input
+                    id="alert-threshold"
+                    type="number"
+                    min={100}
+                    step={100}
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    value={alertThreshold}
+                    onChange={(event) => setAlertThreshold(Number(event.target.value.replace(/\D/g, "")) || 1000)}
+                    title="Close alert margin"
+                  />
+                  <button className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={shareView} title="Copy share link">
+                    <Share2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -376,6 +571,18 @@ export function App() {
         </div>
       </section>
       <PartySummaryDock parties={partySummaryQuery.data?.parties ?? []} checkedAt={partySummaryQuery.dataUpdatedAt} />
+      {toast && (
+        <div className="fixed right-4 top-4 z-[60] max-w-sm rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-lg dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100">
+          {toast}
+        </div>
+      )}
+      {winnerToasts.length > 0 && (
+        <div className="fixed bottom-24 right-4 z-[70] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-3 sm:bottom-4">
+          {winnerToasts.map((winner) => (
+            <WinnerToast key={winner.id} winner={winner} onClose={() => setWinnerToasts((current) => current.filter((item) => item.id !== winner.id))} />
+          ))}
+        </div>
+      )}
     </main>
   );
 }
@@ -398,6 +605,35 @@ function DashboardMetrics({
       <Metric label="Last sync" value={lastSuccessAt ? new Date(lastSuccessAt).toLocaleTimeString() : "Waiting"} />
       <Metric label="Source" value={sourceHealth} />
     </>
+  );
+}
+
+function WinnerToast({ winner, onClose }: { winner: WinnerNotification; onClose: () => void }) {
+  return (
+    <div className="animate-winner-toast rounded-md border border-emerald-300 bg-white p-3 shadow-2xl dark:border-emerald-800 dark:bg-zinc-950" role="status" aria-live="polite">
+      <div className="flex items-start gap-3">
+        <CandidatePhoto candidateName={winner.candidateName} photoUrl={winner.photoUrl} size="large" tone="leading" />
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Winner Declared</div>
+          <div className="mt-1 truncate text-lg font-black text-zinc-950 dark:text-white" title={winner.candidateName}>{winner.candidateName}</div>
+          <div className="truncate text-sm font-bold text-zinc-600 dark:text-zinc-300" title={winner.party}>{shortPartyName(winner.party)}</div>
+          <div className="mt-1 truncate text-xs font-semibold text-zinc-500">{winner.constituencyName}</div>
+        </div>
+        <button className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-bold dark:border-zinc-700" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-md bg-emerald-50 p-2 dark:bg-emerald-950/50">
+          <div className="text-[10px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Total votes</div>
+          <div className="mt-1 text-xl font-black text-zinc-950 dark:text-white">{formatNumber(winner.totalVotes)}</div>
+        </div>
+        <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+          <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Winning margin</div>
+          <div className="mt-1 text-xl font-black text-emerald-700 dark:text-emerald-300">{formatNumber(winner.margin)}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -716,7 +952,11 @@ function ResultCard({
   isPinned,
   onTogglePin,
   changedAt,
-  leaderChanged
+  leaderChanged,
+  history,
+  note,
+  onNoteChange,
+  isLastKnown
 }: {
   result: ConstituencyResult;
   previous?: ConstituencyResult;
@@ -725,7 +965,12 @@ function ResultCard({
   onTogglePin: () => void;
   changedAt?: number;
   leaderChanged: boolean;
+  history: LeaderHistoryEntry[];
+  note: string;
+  onNoteChange: (note: string) => void;
+  isLastKnown: boolean;
 }) {
+  const [notesOpen, setNotesOpen] = useState(false);
   const leader = result.candidates[0];
   const runnerUp = result.candidates[1];
   const moreCandidates = result.candidates.slice(2, 4);
@@ -734,9 +979,10 @@ function ResultCard({
   const leaderParty = shortPartyName(result.leadingParty || leader?.party || "-");
   const runnerName = result.trailingCandidate || runnerUp?.candidateName || "-";
   const runnerParty = shortPartyName(result.trailingParty || runnerUp?.party || "-");
+  const roundProgress = parseRoundProgress(result.roundStatus || result.statusText);
 
   return (
-    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh overflow-hidden rounded-md ${result.margin <= 1000 ? "ring-2 ring-rose-600" : result.margin <= 5000 ? "ring-2 ring-amber-400" : ""}`}>
+    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative overflow-visible rounded-md ${result.margin <= 1000 ? "ring-2 ring-rose-600" : result.margin <= 5000 ? "ring-2 ring-amber-400" : ""}`}>
       <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
         <div className="flex items-start justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -744,18 +990,38 @@ function ResultCard({
             <StatusBadge status={result.statusText || result.roundStatus} />
             {result.margin <= 5000 && <span className="badge bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100">Close</span>}
             {leaderChanged && <span className="badge bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100">Changed</span>}
+            {isLastKnown && <span className="badge bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">Last known</span>}
           </div>
-          <button
-            className={`shrink-0 rounded-md p-1 ${isPinned ? "text-amber-500" : "text-zinc-400 hover:text-amber-500"}`}
-            onClick={onTogglePin}
-            title={isPinned ? "Unpin" : "Pin"}
-            aria-label={isPinned ? "Unpin constituency" : "Pin constituency"}
-          >
-            <Star className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <HistoryTooltip history={history} />
+            <button
+              className={`rounded-md p-1 ${note ? "text-emerald-700 dark:text-emerald-300" : "text-zinc-400 hover:text-emerald-700"}`}
+              onClick={() => setNotesOpen(!notesOpen)}
+              title="Seat note"
+              aria-label="Seat note"
+            >
+              <StickyNote className="h-4 w-4" />
+            </button>
+            <button
+              className={`rounded-md p-1 ${isPinned ? "text-amber-500" : "text-zinc-400 hover:text-amber-500"}`}
+              onClick={onTogglePin}
+              title={isPinned ? "Unpin" : "Pin"}
+              aria-label={isPinned ? "Unpin constituency" : "Pin constituency"}
+            >
+              <Star className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
+            </button>
+          </div>
         </div>
       </div>
       <div className="px-4 pb-4">
+        {notesOpen && (
+          <textarea
+            className="mt-3 h-16 w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            value={note}
+            onChange={(event) => onNoteChange(event.target.value)}
+            placeholder="Private note for this seat"
+          />
+        )}
         <div className="mt-4 grid grid-cols-[72px_1fr_auto] items-center gap-3">
           <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" />
           <div className="min-w-0">
@@ -800,6 +1066,11 @@ function ResultCard({
             {changedAt && <div>Changed {new Date(changedAt).toLocaleTimeString()}</div>}
           </div>
         </div>
+        {roundProgress && (
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
+            <div className="h-full rounded-full bg-emerald-700" style={{ width: `${Math.min(100, (roundProgress.current / roundProgress.total) * 100)}%` }} />
+          </div>
+        )}
       </div>
     </article>
   );
@@ -820,6 +1091,38 @@ function CandidateMiniTooltip({
         <div className="mt-1 text-xs font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
         <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">{shortPartyName(candidate.party)}</div>
         <div className="mt-1 text-xs font-black text-zinc-950 dark:text-white">{formatNumber(candidate.totalVotes)} votes</div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryTooltip({ history }: { history: LeaderHistoryEntry[] }) {
+  return (
+    <div className="group relative">
+      <button
+        className={`rounded-md p-1 ${history.length ? "text-sky-700 dark:text-sky-300" : "text-zinc-400"}`}
+        title="Leader history"
+        aria-label="Leader history"
+        type="button"
+      >
+        <History className="h-4 w-4" />
+      </button>
+      <div className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-64 max-w-[calc(100vw-2rem)] rounded-md border border-zinc-200 bg-white p-3 text-left shadow-lg group-hover:block group-focus-within:block dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Recent movement</div>
+        {history.length ? (
+          <div className="mt-2 space-y-2">
+            {history.map((entry) => (
+              <div key={`${entry.at}-${entry.leader}`} className="text-xs">
+                <div className="font-black text-zinc-950 dark:text-white">{entry.leader}</div>
+                <div className="text-zinc-500">
+                  {shortPartyName(entry.party)} by {formatNumber(entry.margin)} at {new Date(entry.at).toLocaleTimeString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-2 text-xs text-zinc-500">No change recorded in this browser yet.</div>
+        )}
       </div>
     </div>
   );
@@ -996,6 +1299,19 @@ function formatNumber(value: number) {
 function formatDelta(value: number) {
   if (!value) return "0";
   return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
+}
+
+function parseRoundProgress(value: string) {
+  const match = value.match(/(\d+)\s*(?:\/|of)\s*(\d+)/i);
+  if (!match) return null;
+  const current = Number(match[1]);
+  const total = Number(match[2]);
+  if (!current || !total || current > total) return null;
+  return { current, total };
+}
+
+function isDeclaredWinner(value: string) {
+  return /\b(won|result\s+declared|declared)\b/i.test(value);
 }
 
 function initials(value: string) {
