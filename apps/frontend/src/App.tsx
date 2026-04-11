@@ -232,11 +232,8 @@ export function App() {
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-4">
-            <Metric label="Selected" value={String(selectedIds.length)} />
-            <Metric label="Next refresh" value={`${countdown}s`} />
-            <Metric label="Last sync" value={lastSuccessAt ? new Date(lastSuccessAt).toLocaleTimeString() : "Waiting"} />
-            <Metric label="Source" value={sourceHealth} />
+          <div className="hidden gap-3 md:grid md:grid-cols-4">
+            <DashboardMetrics selectedCount={selectedIds.length} countdown={countdown} lastSuccessAt={lastSuccessAt} sourceHealth={sourceHealth} />
           </div>
         </div>
       </section>}
@@ -276,7 +273,7 @@ export function App() {
         )}
 
         <div className={watchMode ? "block" : `grid gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_1fr]" : "lg:grid-cols-[260px_1fr]"}`}>
-          {!watchMode && <aside className="order-1 space-y-4 lg:order-none lg:col-start-1 lg:row-start-1">
+          {!watchMode && <aside className="order-2 space-y-4 lg:order-none lg:col-start-1 lg:row-start-1">
             <ConstituencySelector
               options={constituenciesQuery.data?.constituencies ?? []}
               selectedIds={selectedIds}
@@ -287,7 +284,7 @@ export function App() {
             />
           </aside>}
 
-          <div className={watchMode ? "grid content-start gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "order-2 grid content-start gap-4 md:grid-cols-2 xl:grid-cols-3 lg:col-start-2 lg:row-span-2 lg:row-start-1"}>
+          <div className={watchMode ? "grid content-start gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" : "order-1 grid content-start gap-4 md:grid-cols-2 xl:grid-cols-3 lg:col-start-2 lg:row-span-2 lg:row-start-1"}>
             {selectedIds.length === 0 && <EmptyState />}
             {selectedOptions.map((option, index) => {
               const query = resultQueries[index];
@@ -321,17 +318,7 @@ export function App() {
             ))}
           </div>
           {!watchMode && !sidebarCollapsed && (
-            <div className="order-3 space-y-4 lg:col-start-1 lg:row-start-2">
-              <SourceConfigPanel
-                sourceConfig={sourceConfigQuery.data}
-                onUpdated={() => {
-                  void queryClient.invalidateQueries({ queryKey: ["source-config"] });
-                  void queryClient.invalidateQueries({ queryKey: ["constituencies"] });
-                  void queryClient.invalidateQueries({ queryKey: ["summary"] });
-                  void queryClient.invalidateQueries({ queryKey: ["result"] });
-                  void queryClient.invalidateQueries({ queryKey: ["party-summary"] });
-                }}
-              />
+            <div className="order-3 flex flex-col gap-4 lg:col-start-1 lg:row-start-2">
               <div className="panel rounded-md p-4">
                 <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="sort">Sort cards</label>
                 <select
@@ -369,12 +356,48 @@ export function App() {
                   </button>
                 </div>
               </div>
+              <SourceConfigPanel
+                sourceConfig={sourceConfigQuery.data}
+                onUpdated={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["source-config"] });
+                  void queryClient.invalidateQueries({ queryKey: ["constituencies"] });
+                  void queryClient.invalidateQueries({ queryKey: ["summary"] });
+                  void queryClient.invalidateQueries({ queryKey: ["result"] });
+                  void queryClient.invalidateQueries({ queryKey: ["party-summary"] });
+                }}
+              />
+            </div>
+          )}
+          {!watchMode && (
+            <div className="order-4 grid gap-3 md:hidden">
+              <DashboardMetrics selectedCount={selectedIds.length} countdown={countdown} lastSuccessAt={lastSuccessAt} sourceHealth={sourceHealth} />
             </div>
           )}
         </div>
       </section>
       <PartySummaryDock parties={partySummaryQuery.data?.parties ?? []} checkedAt={partySummaryQuery.dataUpdatedAt} />
     </main>
+  );
+}
+
+function DashboardMetrics({
+  selectedCount,
+  countdown,
+  lastSuccessAt,
+  sourceHealth
+}: {
+  selectedCount: number;
+  countdown: number;
+  lastSuccessAt: number;
+  sourceHealth: string;
+}) {
+  return (
+    <>
+      <Metric label="Selected" value={String(selectedCount)} />
+      <Metric label="Next refresh" value={`${countdown}s`} />
+      <Metric label="Last sync" value={lastSuccessAt ? new Date(lastSuccessAt).toLocaleTimeString() : "Waiting"} />
+      <Metric label="Source" value={sourceHealth} />
+    </>
   );
 }
 
