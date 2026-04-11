@@ -1315,6 +1315,7 @@ function ResultCard({
   const runnerName = result.trailingCandidate || runnerUp?.candidateName || "-";
   const runnerParty = shortPartyName(result.trailingParty || runnerUp?.party || "-");
   const roundProgress = parseRoundProgress(result.roundStatus || result.statusText);
+  const countingPercent = roundProgress ? Math.min(100, Math.round((roundProgress.current / roundProgress.total) * 100)) : undefined;
   const statusForDisplay = result.statusText || result.roundStatus;
   const declared = isDeclaredWinner(result.statusText || result.roundStatus);
   const closeFight = result.margin <= 5000;
@@ -1322,7 +1323,8 @@ function ResultCard({
 
   return (
     <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative overflow-visible rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
-      <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
+      <div className="border-b border-zinc-200 dark:border-zinc-800">
+        <div className="p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-bold text-zinc-950 dark:text-white">{result.constituencyName}</h2>
@@ -1348,6 +1350,7 @@ function ResultCard({
               <Star className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
             </button>
           </div>
+        </div>
         </div>
       </div>
       <div className="px-4 pb-4">
@@ -1403,12 +1406,15 @@ function ResultCard({
             {changedAt && <div>Changed {new Date(changedAt).toLocaleTimeString()}</div>}
           </div>
         </div>
-        {roundProgress && (
-          <div className="mt-2 h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
-            <div className="h-full rounded-full bg-emerald-700" style={{ width: `${Math.min(100, (roundProgress.current / roundProgress.total) * 100)}%` }} />
-          </div>
-        )}
       </div>
+      {roundProgress && !declared && (
+        <div className="relative h-4 overflow-hidden rounded-b-md bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
+          <div className="h-full bg-gradient-to-r from-emerald-700 via-teal-500 to-sky-500" style={{ width: `${countingPercent}%` }} />
+          <div className="absolute inset-0 flex items-center justify-center text-[10px] font-normal text-white">
+            Counting: {countingPercent}% · R{roundProgress.current}/{roundProgress.total}
+          </div>
+        </div>
+      )}
     </article>
   );
 }

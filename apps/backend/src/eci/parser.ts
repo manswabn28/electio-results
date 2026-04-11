@@ -159,13 +159,14 @@ export function parseConstituencyPage(
   const totalVotes = candidates.reduce((sum, candidate) => sum + candidate.totalVotes, 0);
   const inferredName = stateSummary?.constituencyName || inferNameFromPage($, sourceUrl);
   const inferredNumber = stateSummary?.constituencyNumber || inferConstituencyNumber(sourceUrl, []);
+  const detailRoundStatus = findRoundStatusFromPage($, text);
 
   return {
     constituencyId: stateSummary?.constituencyId || constituencyIdFor(inferredName, inferredNumber),
     constituencyName: inferredName,
     constituencyNumber: inferredNumber,
     statusText: stateSummary?.statusText || findStatusText(text),
-    roundStatus: stateSummary?.roundStatus || findRoundStatus(text),
+    roundStatus: detailRoundStatus || stateSummary?.roundStatus || findRoundStatus(text),
     leadingCandidate: stateSummary?.leadingCandidate || leader?.candidateName || "",
     leadingParty: stateSummary?.leadingParty || leader?.party || "",
     trailingCandidate: stateSummary?.trailingCandidate || runnerUp?.candidateName || "",
@@ -454,6 +455,13 @@ function findStatusText(text: string): string {
 function findRoundStatus(text: string): string {
   const match = text.match(/Round\s*[^.]{0,80}/i);
   return cleanText(match?.[0] ?? "");
+}
+
+function findRoundStatusFromPage($: cheerio.CheerioAPI, text: string): string {
+  const explicit = cleanText($(".round-status").first().text());
+  if (explicit) return explicit;
+  const match = text.match(/Status\s+as\s+on\s+Round\s*,?\s*(\d+\s*\/\s*\d+)/i);
+  return match ? `Status as on Round ${match[1]}` : "";
 }
 
 function findLastUpdated(text: string): string {
