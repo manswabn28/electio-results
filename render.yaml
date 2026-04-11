@@ -29,7 +29,15 @@ services:
       - key: ECI_KERALA_STATE_CODE
         value: ""
       - key: CACHE_TTL_SECONDS
-        value: 25
+        value: 8
+      - key: ECI_MAX_CONCURRENCY
+        value: 4
+      - key: ECI_REQUEST_SPACING_MS
+        value: 150
+      - key: ECI_BACKOFF_BASE_SECONDS
+        value: 15
+      - key: ECI_BACKOFF_MAX_SECONDS
+        value: 90
       - key: DEFAULT_FAVORITES
         value: thrissur,ernakulam,palakkad,nemom
       - key: REQUEST_TIMEOUT_MS

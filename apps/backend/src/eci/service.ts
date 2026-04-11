@@ -63,6 +63,10 @@ async function getStateSummaries(): Promise<{ sourceUrl?: string; summaries: Con
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown ECI source error";
     logger.error({ error }, "Failed to load Kerala state summaries from ECI");
+    const stale = cache.getStale(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
+    if (stale?.summaries.length) {
+      return { ...stale, error: message };
+    }
     const value = fallbackState(message);
     cache.set(cacheKey, value);
     return value;
@@ -142,10 +146,18 @@ export async function getConstituencyResult(constituencyId: string): Promise<Con
   try {
     const html = await fetchHtml(summary.sourceUrl);
     const result = parseConstituencyPage(html, summary.sourceUrl, summary);
+    if (!result.candidates.length) {
+      throw Object.assign(new Error(`No candidate rows parsed for constituency ${constituencyId}.`), {
+        statusCode: 502,
+        code: "ECI_UNEXPECTED_HTML"
+      });
+    }
     cache.set(cacheKey, result);
     return result;
   } catch (error) {
     logger.error({ error, constituencyId, sourceUrl: summary.sourceUrl }, "Failed to parse constituency detail page");
+    const stale = cache.getStale(cacheKey) as ConstituencyResult | undefined;
+    if (stale) return stale;
     throw error;
   }
 }
@@ -158,14 +170,28 @@ export async function getPartySummary(): Promise<PartySummaryResponse> {
   const sourceConfig = await getSourceConfig();
   const listUrl = resolveConfiguredUrl(sourceConfig, sourceConfig.constituencyListUrl);
   const indexUrl = new URL("index.htm", listUrl).toString();
-  const html = await fetchHtml(indexUrl);
-  const value = {
-    generatedAt: new Date().toISOString(),
-    sourceUrl: indexUrl,
-    parties: parsePartySummaryPage(html)
-  };
-  cache.set(cacheKey, value);
-  return value;
+  try {
+    const html = await fetchHtml(indexUrl);
+    const parties = parsePartySummaryPage(html);
+    if (!parties.length) {
+      throw Object.assign(new Error("No party summary rows parsed from ECI index page."), {
+        statusCode: 502,
+        code: "ECI_UNEXPECTED_HTML"
+      });
+    }
+    const value = {
+      generatedAt: new Date().toISOString(),
+      sourceUrl: indexUrl,
+      parties
+    };
+    cache.set(cacheKey, value);
+    return value;
+  } catch (error) {
+    logger.error({ error, sourceUrl: indexUrl }, "Failed to parse party summary page");
+    const stale = cache.getStale(cacheKey) as PartySummaryResponse | undefined;
+    if (stale) return stale;
+    throw error;
+  }
 }
 
 export function clearElectionCache(): void {

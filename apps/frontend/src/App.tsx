@@ -9,6 +9,7 @@ import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } f
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
 const VIEWER_ID_STORAGE_KEY = "kerala-election:viewer-id";
+const TIGHT_MARGIN_LIMIT = 5000;
 
 const LIVE_CHANNELS = [
   { id: "reporter-tv", label: "Reporter Live", videoId: "nObUcHKZEGY" },
@@ -37,6 +38,10 @@ type WinnerNotification = {
   margin: number;
 };
 
+type LostNotification = WinnerNotification & {
+  winnerName: string;
+};
+
 export function App() {
   const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useLocalStorageState<string[]>(SELECTED_STORAGE_KEY, []);
@@ -58,12 +63,14 @@ export function App() {
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
   const [alertThreshold, setAlertThreshold] = useLocalStorageState<number>("kerala-election:alert-threshold", 1000);
   const [seenWinnerIds, setSeenWinnerIds] = useLocalStorageState<string[]>("kerala-election:seen-winner-notifications", []);
+  const [seenLostIds, setSeenLostIds] = useLocalStorageState<string[]>("kerala-election:seen-lost-notifications", []);
   const [viewerId] = useLocalStorageState<string>(VIEWER_ID_STORAGE_KEY, () => crypto.randomUUID());
   const [liveAudioStarted, setLiveAudioStarted] = useLocalStorageState<boolean>("kerala-election:live-audio-started", false);
   const [liveAudioExpanded, setLiveAudioExpanded] = useLocalStorageState<boolean>("kerala-election:live-audio-expanded", false);
   const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
+  const [lostToasts, setLostToasts] = useState<LostNotification[]>([]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -305,6 +312,33 @@ export function App() {
   }, [allSummaryQuery.data?.results, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
 
   useEffect(() => {
+    const closeDeclaredLosses = liveResults.filter((result) => {
+      if (!isDeclaredWinner(result.statusText || result.roundStatus)) return false;
+      if (result.margin > TIGHT_MARGIN_LIMIT) return false;
+      if (seenLostIds.includes(result.constituencyId)) return false;
+      return Boolean(result.candidates[1]);
+    });
+    if (!closeDeclaredLosses.length) return;
+
+    setSeenLostIds((current) => [...new Set([...current, ...closeDeclaredLosses.map((result) => result.constituencyId)])]);
+    closeDeclaredLosses.forEach((result, index) => {
+      const loser = result.candidates[1];
+      window.setTimeout(() => {
+        addLostToast({
+          id: result.constituencyId,
+          constituencyName: result.constituencyName,
+          candidateName: result.trailingCandidate || loser?.candidateName || "-",
+          party: result.trailingParty || loser?.party || "-",
+          photoUrl: loser?.photoUrl,
+          totalVotes: loser?.totalVotes ?? 0,
+          margin: result.margin,
+          winnerName: result.leadingCandidate || result.candidates[0]?.candidateName || "-"
+        });
+      }, index * 4500);
+    });
+  }, [alertThreshold, liveResults, seenLostIds, setSeenLostIds]);
+
+  useEffect(() => {
     if (!results.length) return;
     const changedEntries = results.filter((result) => {
       const previous = previousResults.get(result.constituencyId);
@@ -379,6 +413,12 @@ export function App() {
     setWinnerToasts((current) => [...current.filter((item) => item.id !== winner.id), winner].slice(-5));
     window.setTimeout(() => {
       setWinnerToasts((current) => current.filter((item) => item.id !== winner.id));
+    }, 12000);
+  };
+  const addLostToast = (lost: LostNotification) => {
+    setLostToasts((current) => [...current.filter((item) => item.id !== lost.id), lost].slice(-5));
+    window.setTimeout(() => {
+      setLostToasts((current) => current.filter((item) => item.id !== lost.id));
     }, 12000);
   };
   const shareView = async () => {
@@ -621,6 +661,13 @@ export function App() {
           ))}
         </div>
       )}
+      {lostToasts.length > 0 && (
+        <div className="fixed bottom-24 left-4 z-[70] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-3 sm:bottom-24">
+          {lostToasts.map((lost) => (
+            <LostToast key={lost.id} lost={lost} onClose={() => setLostToasts((current) => current.filter((item) => item.id !== lost.id))} />
+          ))}
+        </div>
+      )}
       <LiveAudioPlayer
         channels={LIVE_CHANNELS}
         selectedChannelId={selectedLiveChannelId}
@@ -686,6 +733,38 @@ function WinnerToast({ winner, onClose }: { winner: WinnerNotification; onClose:
           <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Winning margin</div>
           <div className="mt-1 text-xl font-black text-emerald-700 dark:text-emerald-300">{formatNumber(winner.margin)}</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function LostToast({ lost, onClose }: { lost: LostNotification; onClose: () => void }) {
+  return (
+    <div className="animate-winner-toast rounded-md border border-rose-300 bg-white p-3 shadow-2xl dark:border-rose-800 dark:bg-zinc-950" role="status" aria-live="polite">
+      <div className="flex items-start gap-3">
+        <CandidatePhoto candidateName={lost.candidateName} photoUrl={lost.photoUrl} size="large" tone="trailing" />
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black uppercase tracking-wide text-rose-700 dark:text-rose-300">Narrow Loss</div>
+          <div className="mt-1 truncate text-lg font-black text-zinc-950 dark:text-white" title={lost.candidateName}>{lost.candidateName}</div>
+          <div className="truncate text-sm font-bold text-zinc-600 dark:text-zinc-300" title={lost.party}>{shortPartyName(lost.party)}</div>
+          <div className="mt-1 truncate text-xs font-semibold text-zinc-500">{lost.constituencyName}</div>
+        </div>
+        <button className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-bold dark:border-zinc-700" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-md bg-rose-50 p-2 dark:bg-rose-950/50">
+          <div className="text-[10px] font-black uppercase tracking-wide text-rose-700 dark:text-rose-300">Lost by</div>
+          <div className="mt-1 text-xl font-black text-rose-700 dark:text-rose-300">{formatNumber(lost.margin)}</div>
+        </div>
+        <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+          <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Total votes</div>
+          <div className="mt-1 text-xl font-black text-zinc-950 dark:text-white">{formatNumber(lost.totalVotes)}</div>
+        </div>
+      </div>
+      <div className="mt-2 truncate text-[10px] font-semibold text-zinc-500">
+        Winner: {lost.winnerName}
       </div>
     </div>
   );
@@ -1105,7 +1184,7 @@ function ResultCard({
   leaderChanged,
   history,
   note,
-  onNoteChange,
+  onNoteChange
 }: {
   result: ConstituencyResult;
   previous?: ConstituencyResult;
@@ -1128,6 +1207,7 @@ function ResultCard({
   const runnerName = result.trailingCandidate || runnerUp?.candidateName || "-";
   const runnerParty = shortPartyName(result.trailingParty || runnerUp?.party || "-");
   const roundProgress = parseRoundProgress(result.roundStatus || result.statusText);
+  const statusForDisplay = result.statusText || result.roundStatus;
   const declared = isDeclaredWinner(result.statusText || result.roundStatus);
   const closeFight = result.margin <= 5000;
   const veryCloseFight = result.margin <= 1000;
@@ -1138,7 +1218,7 @@ function ResultCard({
         <div className="flex items-start justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-bold text-zinc-950 dark:text-white">{result.constituencyName}</h2>
-            <StatusIcon status={result.statusText || result.roundStatus} />
+            <StatusIcon status={statusForDisplay} />
             {leaderChanged && <span className="badge bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100">Changed</span>}
           </div>
           <div className="flex shrink-0 items-center gap-1">

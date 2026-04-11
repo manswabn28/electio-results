@@ -10,7 +10,11 @@ const envSchema = z.object({
   ECI_ELECTION_PATH: z.string().optional().default(""),
   ECI_KERALA_STATE_PAGE: z.string().optional().default(""),
   ECI_KERALA_STATE_CODE: z.string().optional().default(""),
-  CACHE_TTL_SECONDS: z.coerce.number().min(5).max(300).default(25),
+  CACHE_TTL_SECONDS: z.coerce.number().min(5).max(300).default(8),
+  ECI_MAX_CONCURRENCY: z.coerce.number().min(1).max(10).default(4),
+  ECI_REQUEST_SPACING_MS: z.coerce.number().min(0).max(2000).default(150),
+  ECI_BACKOFF_BASE_SECONDS: z.coerce.number().min(5).max(120).default(15),
+  ECI_BACKOFF_MAX_SECONDS: z.coerce.number().min(10).max(600).default(90),
   DEFAULT_FAVORITES: z.string().default("thrissur,ernakulam,palakkad,nemom"),
   REQUEST_TIMEOUT_MS: z.coerce.number().min(3000).max(30000).default(12000)
 });

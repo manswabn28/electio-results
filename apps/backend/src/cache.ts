@@ -1,6 +1,7 @@
 type CacheRecord<T> = {
   value: T;
   expiresAt: number;
+  writtenAt: number;
 };
 
 export class TtlCache<T> {
@@ -12,14 +13,18 @@ export class TtlCache<T> {
     const record = this.records.get(key);
     if (!record) return undefined;
     if (Date.now() > record.expiresAt) {
-      this.records.delete(key);
       return undefined;
     }
     return record.value;
   }
 
+  getStale(key: string): T | undefined {
+    return this.records.get(key)?.value;
+  }
+
   set(key: string, value: T): void {
-    this.records.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+    const now = Date.now();
+    this.records.set(key, { value, writtenAt: now, expiresAt: now + this.ttlMs });
   }
 
   clear(): void {
