@@ -8,14 +8,32 @@ import { logger } from "./logger.js";
 import { createApiRouter } from "./routes.js";
 
 const app = express();
-const allowedOrigins = config.FRONTEND_ORIGIN.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-const corsOrigin = allowedOrigins.includes("*") ? "*" : allowedOrigins;
+const allowedOrigins = new Set(
+  [
+    "https://kerala-election.onrender.com",
+    "http://localhost:5173",
+    ...config.FRONTEND_ORIGIN.split(",")
+  ]
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter(Boolean)
+);
+const allowAnyOrigin = allowedOrigins.has("*");
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
-app.use(cors({ origin: corsOrigin, credentials: false }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowAnyOrigin || allowedOrigins.has(origin.replace(/\/+$/, ""))) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`CORS origin not allowed: ${origin}`));
+    },
+    credentials: false,
+    optionsSuccessStatus: 204
+  })
+);
 app.use(express.json({ limit: "1mb" }));
 app.use(pinoHttp({ logger }));
 app.use("/api", createApiRouter());
