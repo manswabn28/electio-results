@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, Bell, ChevronLeft, ChevronRight, Download, Eye, History, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
 import type { ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
 import { fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
@@ -9,6 +9,15 @@ import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } f
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
 const VIEWER_ID_STORAGE_KEY = "kerala-election:viewer-id";
+
+const LIVE_CHANNELS = [
+  { id: "reporter-tv", label: "Reporter Live", videoId: "nObUcHKZEGY" },
+  { id: "24-news", label: "24 News", videoId: "1wECsnGZcfc" },
+  { id: "asianet-news", label: "Asianet News", videoId: "4wExBtPQ-JA" },
+  { id: "mediaone-tv", label: "MediaOne TV Live", videoId: "-8d8-c0yvyU" },
+  { id: "mathrubhumi-news", label: "Mathrubhumi News", videoId: "YGEgelAiUf0" },
+  { id: "manorama-news", label: "Manorama News", videoId: "tgBTspqA5nY" }
+] as const;
 
 type LeaderHistoryEntry = {
   at: number;
@@ -44,11 +53,15 @@ export function App() {
   const [partyFilter, setPartyFilter] = useLocalStorageState<string>("kerala-election:party-filter", "all");
   const [lastChangedAt, setLastChangedAt] = useLocalStorageState<Record<string, number>>("kerala-election:last-changed-at", {});
   const [cachedResults, setCachedResults] = useLocalStorageState<Record<string, ConstituencyResult>>(CACHED_RESULTS_KEY, {});
+  const [lastCheckedById, setLastCheckedById] = useLocalStorageState<Record<string, number>>("kerala-election:last-checked-by-id", {});
   const [leaderHistory, setLeaderHistory] = useLocalStorageState<Record<string, LeaderHistoryEntry[]>>("kerala-election:leader-history", {});
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
   const [alertThreshold, setAlertThreshold] = useLocalStorageState<number>("kerala-election:alert-threshold", 1000);
   const [seenWinnerIds, setSeenWinnerIds] = useLocalStorageState<string[]>("kerala-election:seen-winner-notifications", []);
   const [viewerId] = useLocalStorageState<string>(VIEWER_ID_STORAGE_KEY, () => crypto.randomUUID());
+  const [liveAudioStarted, setLiveAudioStarted] = useLocalStorageState<boolean>("kerala-election:live-audio-started", false);
+  const [liveAudioExpanded, setLiveAudioExpanded] = useLocalStorageState<boolean>("kerala-election:live-audio-expanded", false);
+  const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
 
@@ -197,13 +210,16 @@ export function App() {
     () => resultQueries.map((query) => query.data).filter(Boolean) as ConstituencyResult[],
     [resultQueries]
   );
+  const checkedAtById = useMemo(() => {
+    const entries = selectedIds.map((id, index) => [id, resultQueries[index]?.dataUpdatedAt || 0] as const);
+    return Object.fromEntries(entries);
+  }, [resultQueries, selectedIds]);
   const results = useMemo(() => {
     const liveById = new Map(liveResults.map((result) => [result.constituencyId, result]));
     return selectedIds
       .map((id) => liveById.get(id) ?? cachedResults[id])
       .filter(Boolean) as ConstituencyResult[];
   }, [cachedResults, liveResults, selectedIds]);
-  const liveResultIds = useMemo(() => new Set(liveResults.map((result) => result.constituencyId)), [liveResults]);
   const previousResults = usePreviousMap(results);
   const leaderChanges = useMemo(() => {
     return results.filter((result) => {
@@ -228,7 +244,19 @@ export function App() {
       }
       return changed ? next : current;
     });
-  }, [liveResults, setCachedResults]);
+    setLastCheckedById((current) => {
+      const now = Date.now();
+      let changed = false;
+      const next = { ...current };
+      for (const result of liveResults) {
+        const updatedAt = checkedAtById[result.constituencyId] || now;
+        if (next[result.constituencyId] === updatedAt) continue;
+        next[result.constituencyId] = updatedAt;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [checkedAtById, liveResults, setCachedResults, setLastCheckedById]);
 
   useEffect(() => {
     const summaries = allSummaryQuery.data?.results ?? [];
@@ -495,7 +523,7 @@ export function App() {
                 key={result.constituencyId}
                 result={result}
                 previous={previousResults.get(result.constituencyId)}
-                checkedAt={resultQueries.find((query) => query.data?.constituencyId === result.constituencyId)?.dataUpdatedAt}
+                checkedAt={checkedAtById[result.constituencyId] || lastCheckedById[result.constituencyId] || lastSuccessAt}
                 isPinned={pinnedIds.includes(result.constituencyId)}
                 onTogglePin={() => togglePinned(result.constituencyId)}
                 changedAt={lastChangedAt[result.constituencyId]}
@@ -503,7 +531,6 @@ export function App() {
                 history={leaderHistory[result.constituencyId] ?? []}
                 note={constituencyNotes[result.constituencyId] ?? ""}
                 onNoteChange={(note) => setConstituencyNotes((current) => ({ ...current, [result.constituencyId]: note }))}
-                isLastKnown={!liveResultIds.has(result.constituencyId)}
               />
             ))}
           </div>
@@ -594,6 +621,22 @@ export function App() {
           ))}
         </div>
       )}
+      <LiveAudioPlayer
+        channels={LIVE_CHANNELS}
+        selectedChannelId={selectedLiveChannelId}
+        onSelectedChannelIdChange={setSelectedLiveChannelId}
+        started={liveAudioStarted}
+        expanded={liveAudioExpanded}
+        onStart={() => {
+          setLiveAudioStarted(true);
+          setLiveAudioExpanded(true);
+        }}
+        onExpandedChange={setLiveAudioExpanded}
+        onStop={() => {
+          setLiveAudioStarted(false);
+          setLiveAudioExpanded(false);
+        }}
+      />
     </main>
   );
 }
@@ -644,6 +687,86 @@ function WinnerToast({ winner, onClose }: { winner: WinnerNotification; onClose:
           <div className="mt-1 text-xl font-black text-emerald-700 dark:text-emerald-300">{formatNumber(winner.margin)}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function LiveAudioPlayer({
+  channels,
+  selectedChannelId,
+  onSelectedChannelIdChange,
+  started,
+  expanded,
+  onStart,
+  onExpandedChange,
+  onStop
+}: {
+  channels: typeof LIVE_CHANNELS;
+  selectedChannelId: string;
+  onSelectedChannelIdChange: (channelId: string) => void;
+  started: boolean;
+  expanded: boolean;
+  onStart: () => void;
+  onExpandedChange: (expanded: boolean) => void;
+  onStop: () => void;
+}) {
+  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId) ?? channels[0];
+
+  if (!started) {
+    return (
+      <button
+        className="fixed bottom-28 left-4 z-50 inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white/95 px-3 py-2 text-sm font-black text-zinc-800 shadow-lg backdrop-blur hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-100 dark:hover:bg-zinc-900 sm:bottom-24"
+        onClick={onStart}
+        title="Live audio"
+      >
+        <Volume2 className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+        Live
+      </button>
+    );
+  }
+
+  return (
+    <div className={`fixed bottom-28 left-4 z-50 rounded-md border border-zinc-200 bg-white/95 p-3 shadow-2xl backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 sm:bottom-24 ${expanded ? "w-[min(320px,calc(100vw-2rem))]" : "w-auto"}`}>
+      <div className="flex items-center gap-2">
+        <Volume2 className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+        {expanded ? (
+          <select
+            className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-xs font-bold dark:border-zinc-700 dark:bg-zinc-900"
+            value={selectedChannel.id}
+            onChange={(event) => onSelectedChannelIdChange(event.target.value)}
+            aria-label="Live channel"
+          >
+            {channels.map((channel) => (
+              <option key={channel.id} value={channel.id}>{channel.label}</option>
+            ))}
+          </select>
+        ) : (
+          <button className="max-w-32 truncate text-left text-sm font-black" onClick={() => onExpandedChange(true)} title={selectedChannel.label}>
+            {selectedChannel.label}
+          </button>
+        )}
+        <button className="rounded-md border border-zinc-300 p-1.5 dark:border-zinc-700" onClick={() => onExpandedChange(!expanded)} title={expanded ? "Minimize live audio" : "Expand live audio"}>
+          {expanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+        <button className="rounded-md border border-zinc-300 p-1.5 dark:border-zinc-700" onClick={onStop} title="Stop live audio">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className={`${expanded ? "mt-3 h-auto opacity-100" : "pointer-events-none h-px w-px opacity-0"} overflow-hidden rounded-md border border-zinc-200 bg-black dark:border-zinc-800`}>
+        <iframe
+          key={selectedChannel.videoId}
+          className="aspect-video w-full"
+          src={`https://www.youtube.com/embed/${selectedChannel.videoId}?autoplay=1&playsinline=1&rel=0`}
+          title={`${selectedChannel.label} live`}
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+      {expanded && (
+        <p className="mt-2 text-[10px] font-semibold leading-4 text-zinc-500">
+          Minimize keeps audio alive. Stop closes the player.
+        </p>
+      )}
     </div>
   );
 }
@@ -983,7 +1106,6 @@ function ResultCard({
   history,
   note,
   onNoteChange,
-  isLastKnown
 }: {
   result: ConstituencyResult;
   previous?: ConstituencyResult;
@@ -995,7 +1117,6 @@ function ResultCard({
   history: LeaderHistoryEntry[];
   note: string;
   onNoteChange: (note: string) => void;
-  isLastKnown: boolean;
 }) {
   const [notesOpen, setNotesOpen] = useState(false);
   const leader = result.candidates[0];
@@ -1007,17 +1128,18 @@ function ResultCard({
   const runnerName = result.trailingCandidate || runnerUp?.candidateName || "-";
   const runnerParty = shortPartyName(result.trailingParty || runnerUp?.party || "-");
   const roundProgress = parseRoundProgress(result.roundStatus || result.statusText);
+  const declared = isDeclaredWinner(result.statusText || result.roundStatus);
+  const closeFight = result.margin <= 5000;
+  const veryCloseFight = result.margin <= 1000;
 
   return (
-    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative overflow-visible rounded-md ${result.margin <= 1000 ? "ring-2 ring-rose-600" : result.margin <= 5000 ? "ring-2 ring-amber-400" : ""}`}>
+    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative overflow-visible rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
       <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
         <div className="flex items-start justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-bold text-zinc-950 dark:text-white">{result.constituencyName}</h2>
-            <StatusBadge status={result.statusText || result.roundStatus} />
-            {result.margin <= 5000 && <span className="badge bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100">Close</span>}
+            <StatusIcon status={result.statusText || result.roundStatus} />
             {leaderChanged && <span className="badge bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100">Changed</span>}
-            {isLastKnown && <span className="badge bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">Last known</span>}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <HistoryTooltip history={history} />
@@ -1050,7 +1172,7 @@ function ResultCard({
           />
         )}
         <div className="mt-4 grid grid-cols-[72px_1fr_auto] items-center gap-3">
-          <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" />
+          <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" crowned={declared} />
           <div className="min-w-0">
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
               <ArrowUp className="h-3.5 w-3.5" />
@@ -1060,7 +1182,7 @@ function ResultCard({
             <div className="truncate text-sm font-semibold text-zinc-600 dark:text-zinc-300" title={leaderParty}>{leaderParty}</div>
           </div>
           <div className="shrink-0 text-right">
-            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Lead</div>
+            <div className={`text-xs font-semibold uppercase tracking-wide ${closeFight ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}`}>{veryCloseFight ? "Alert lead" : closeFight ? "Tight lead" : "Lead"}</div>
             <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">{formatNumber(result.margin)}</div>
             <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Votes</div>
             <div className="text-sm font-black text-zinc-950 dark:text-white">{formatNumber(leader?.totalVotes ?? 0)}</div>
@@ -1207,12 +1329,14 @@ function CandidatePhoto({
   candidateName,
   photoUrl,
   size,
-  tone = "neutral"
+  tone = "neutral",
+  crowned = false
 }: {
   candidateName: string;
   photoUrl?: string;
   size: "large" | "small" | "tiny" | "mini";
   tone?: "leading" | "trailing" | "neutral";
+  crowned?: boolean;
 }) {
   const classes = size === "large" ? "h-16 w-16" : size === "small" ? "h-12 w-12" : size === "tiny" ? "h-9 w-9" : "h-7 w-7";
   const toneClasses =
@@ -1222,14 +1346,21 @@ function CandidatePhoto({
         ? "ring-2 ring-rose-700 dark:ring-rose-400"
         : "ring-1 ring-zinc-300 dark:ring-zinc-700";
   return (
-    <div className={`${classes} ${toneClasses} shrink-0 overflow-hidden rounded-full border-2 border-white bg-zinc-200 shadow-sm dark:border-zinc-950 dark:bg-zinc-800`}>
-      {photoUrl ? (
-        <img className="h-full w-full object-cover" src={photoUrl} alt={candidateName} />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs font-black text-zinc-500">
-          {initials(candidateName)}
+    <div className="relative shrink-0">
+      {crowned && (
+        <div className="absolute -right-1 -top-2 z-10 rounded-full bg-amber-400 p-1 text-amber-950 shadow-lg ring-2 ring-white dark:ring-zinc-950">
+          <Crown className="h-4 w-4 fill-current" />
         </div>
       )}
+      <div className={`${classes} ${toneClasses} overflow-hidden rounded-full border-2 border-white bg-zinc-200 shadow-sm dark:border-zinc-950 dark:bg-zinc-800`}>
+        {photoUrl ? (
+          <img className="h-full w-full object-cover" src={photoUrl} alt={candidateName} />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs font-black text-zinc-500">
+            {initials(candidateName)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1283,14 +1414,33 @@ function Fact({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusIcon({ status }: { status: string }) {
   const lower = status.toLowerCase();
-  const classes = lower.includes("won") || lower.includes("declared")
-    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100"
-    : lower.includes("leading")
-      ? "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-100"
-      : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100";
-  return <span className={`badge ${classes}`}>{status || "Counting"}</span>;
+  const declared = lower.includes("won") || lower.includes("declared");
+  const leading = lower.includes("leading");
+  const title = status || "Counting";
+
+  if (declared) {
+    return (
+      <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-emerald-700 text-white shadow-sm ring-1 ring-emerald-800" title={title} aria-label={title}>
+        <Check className="h-2.5 w-2.5 stroke-[4]" />
+      </span>
+    );
+  }
+
+  if (leading) {
+    return (
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-sky-100 text-sky-800 ring-1 ring-sky-200 dark:bg-sky-900 dark:text-sky-100 dark:ring-sky-800" title={title} aria-label={title}>
+        <ArrowUp className="h-3 w-3" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200 dark:bg-emerald-900 dark:text-emerald-100 dark:ring-emerald-800" title={title} aria-label={title}>
+      <Hourglass className="h-3 w-3 animate-hourglass" />
+    </span>
+  );
 }
 
 function EmptyState() {

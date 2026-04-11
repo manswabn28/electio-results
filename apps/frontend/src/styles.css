@@ -58,6 +58,36 @@ select {
   animation: card-refresh-pulse 900ms ease-out;
 }
 
+@keyframes close-watch-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 18px 40px rgba(15, 23, 42, 0.08);
+    background-color: rgb(255, 255, 255);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.34), 0 0 24px rgba(245, 158, 11, 0.28), 0 18px 40px rgba(15, 23, 42, 0.08);
+    background-color: rgba(255, 251, 235, 0.92);
+  }
+}
+
+.animate-close-watch {
+  animation: close-watch-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes close-fight-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0), 0 18px 40px rgba(15, 23, 42, 0.08);
+    background-color: rgb(255, 255, 255);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(225, 29, 72, 0.38), 0 0 28px rgba(225, 29, 72, 0.32), 0 18px 40px rgba(15, 23, 42, 0.08);
+    background-color: rgba(255, 241, 242, 0.94);
+  }
+}
+
+.animate-close-fight {
+  animation: close-fight-pulse 2.1s ease-in-out infinite;
+}
+
 @keyframes summary-refresh-pulse {
   0% {
     box-shadow: 0 -10px 34px rgba(4, 120, 87, 0.28);
@@ -102,4 +132,20 @@ select {
 
 .animate-winner-toast {
   animation: winner-toast-in 260ms ease-out;
+}
+
+@keyframes hourglass-turn {
+  0%, 35% {
+    transform: rotate(0deg);
+  }
+  50%, 85% {
+    transform: rotate(180deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-hourglass {
+  animation: hourglass-turn 2.4s ease-in-out infinite;
 }
