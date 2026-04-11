@@ -15,7 +15,7 @@ services:
       - key: NODE_VERSION
         value: 20.11.0
       - key: FRONTEND_ORIGIN
-        value: https://kerala-election.onrender.com
+        value: https://kerala-election.onrender.com,https://results.onekeralam.in
       - key: ECI_BASE_URL
         value: https://results.eci.gov.in
       - key: ECI_CONSTITUENCY_LIST_URL

@@ -11,6 +11,7 @@ const app = express();
 const allowedOrigins = new Set(
   [
     "https://kerala-election.onrender.com",
+    "https://results.onekeralam.in",
     "http://localhost:5173",
     "http://localhost:5174",
     ...config.FRONTEND_ORIGIN.split(",")
