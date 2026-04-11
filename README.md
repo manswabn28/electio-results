@@ -202,19 +202,19 @@ npm run start --workspace @kerala-election/backend
 
 This repository includes `render.yaml` for a two-service Render deployment:
 
-- `kerala-election-api`: Render Web Service running the Express backend.
-- `kerala-election-dashboard`: Render Static Site serving the Vite frontend from `apps/frontend/dist`.
+- `api-election-results`: Render Web Service running the Express backend.
+- `kerala-election`: Render Static Site serving the Vite frontend from `apps/frontend/dist`.
 
 The frontend reads the backend endpoint from this build-time environment variable:
 
 ```env
-VITE_API_BASE_URL=https://kerala-election-api.onrender.com
+VITE_API_BASE_URL=https://api-election-results.onrender.com
 ```
 
 The backend allows the deployed static frontend through:
 
 ```env
-FRONTEND_ORIGIN=https://kerala-election-dashboard.onrender.com
+FRONTEND_ORIGIN=https://kerala-election.onrender.com
 ```
 
 If you rename either Render service, update both values in `render.yaml` before syncing the Blueprint. For local development, leave `VITE_API_BASE_URL` unset to use the Vite `/api` proxy, or copy `apps/frontend/.env.example` and set it explicitly.

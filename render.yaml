@@ -4,7 +4,7 @@ previews:
 services:
   - type: web
     runtime: node
-    name: kerala-election-api
+    name: api-election-results
     plan: free
     region: singapore
     buildCommand: npm ci && npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/backend
@@ -14,7 +14,7 @@ services:
       - key: NODE_VERSION
         value: 20.11.0
       - key: FRONTEND_ORIGIN
-        value: https://kerala-election-dashboard.onrender.com
+        value: https://kerala-election.onrender.com
       - key: ECI_BASE_URL
         value: https://results.eci.gov.in
       - key: ECI_CONSTITUENCY_LIST_URL
@@ -36,14 +36,14 @@ services:
 
   - type: web
     runtime: static
-    name: kerala-election-dashboard
+    name: kerala-election
     buildCommand: npm ci && npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/frontend
     staticPublishPath: ./apps/frontend/dist
     envVars:
       - key: NODE_VERSION
         value: 20.11.0
       - key: VITE_API_BASE_URL
-        value: https://kerala-election-api.onrender.com
+        value: https://api-election-results.onrender.com
     routes:
       - type: rewrite
         source: /*
