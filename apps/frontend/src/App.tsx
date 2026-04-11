@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
 import type { CandidateOption, ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
@@ -815,12 +815,30 @@ function LiveAudioPlayer({
   onStop: () => void;
 }) {
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId) ?? channels[0];
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const requestPlay = () => {
+    iframeRef.current?.contentWindow?.postMessage(JSON.stringify({
+      event: "command",
+      func: "playVideo",
+      args: []
+    }), "https://www.youtube.com");
+  };
+
+  useEffect(() => {
+    if (!started) return;
+    const timer = window.setTimeout(requestPlay, 500);
+    return () => window.clearTimeout(timer);
+  }, [selectedChannel.videoId, started]);
 
   if (!started) {
     return (
       <button
         className="fixed bottom-28 left-4 z-50 inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white/95 px-3 py-2 text-sm font-black text-zinc-800 shadow-lg backdrop-blur hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-100 dark:hover:bg-zinc-900 sm:bottom-24"
-        onClick={onStart}
+        onClick={() => {
+          onStart();
+          window.setTimeout(requestPlay, 700);
+        }}
         title="Live audio"
       >
         <Volume2 className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
@@ -852,15 +870,19 @@ function LiveAudioPlayer({
         <button className="rounded-md border border-zinc-300 p-1.5 dark:border-zinc-700" onClick={() => onExpandedChange(!expanded)} title={expanded ? "Minimize live audio" : "Expand live audio"}>
           {expanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
+        <button className="rounded-md border border-zinc-300 p-1.5 text-xs font-black dark:border-zinc-700" onClick={requestPlay} title="Play live audio">
+          <Play className="h-4 w-4" />
+        </button>
         <button className="rounded-md border border-zinc-300 p-1.5 dark:border-zinc-700" onClick={onStop} title="Stop live audio">
           <X className="h-4 w-4" />
         </button>
       </div>
       <div className={`${expanded ? "mt-3 h-auto opacity-100" : "pointer-events-none h-px w-px opacity-0"} overflow-hidden rounded-md border border-zinc-200 bg-black dark:border-zinc-800`}>
         <iframe
+          ref={iframeRef}
           key={selectedChannel.videoId}
           className="aspect-video w-full"
-          src={`https://www.youtube.com/embed/${selectedChannel.videoId}?autoplay=1&playsinline=1&rel=0`}
+          src={`https://www.youtube.com/embed/${selectedChannel.videoId}?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
           title={`${selectedChannel.label} live`}
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
@@ -868,7 +890,7 @@ function LiveAudioPlayer({
       </div>
       {expanded && (
         <p className="mt-2 text-[10px] font-semibold leading-4 text-zinc-500">
-          Minimize keeps audio alive. Stop closes the player.
+          Click play once if the browser blocks audio. Minimize keeps audio alive.
         </p>
       )}
     </div>

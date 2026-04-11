@@ -22,6 +22,7 @@ import {
 import { buildCandidateDetailUrl, getSourceConfig, resolveConfiguredUrl } from "../sourceConfigStore.js";
 
 const cache = new TtlCache<unknown>(config.CACHE_TTL_SECONDS * 1000);
+const backgroundRefreshes = new Map<string, Promise<unknown>>();
 let candidateIndex:
   | {
       sourceKey: string;
@@ -55,7 +56,16 @@ async function getStateSummaries(): Promise<{ sourceUrl?: string; summaries: Con
   const cacheKey = "state-summaries";
   const cached = cache.get(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
   if (cached) return cached;
+  const stale = cache.getStale(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
+  if (stale?.summaries.length) {
+    refreshInBackground(cacheKey, () => refreshStateSummaries(cacheKey));
+    return stale;
+  }
 
+  return refreshStateSummaries(cacheKey);
+}
+
+async function refreshStateSummaries(cacheKey: string): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
   try {
     const sourceUrl = await getKeralaStatePageUrl();
     if (!sourceUrl) {
@@ -72,10 +82,6 @@ async function getStateSummaries(): Promise<{ sourceUrl?: string; summaries: Con
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown ECI source error";
     logger.error({ error }, "Failed to load Kerala state summaries from ECI");
-    const stale = cache.getStale(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
-    if (stale?.summaries.length) {
-      return { ...stale, error: message };
-    }
     const value = fallbackState(message);
     cache.set(cacheKey, value);
     return value;
@@ -201,7 +207,16 @@ export async function getConstituencyResult(constituencyId: string): Promise<Con
   const cacheKey = `result:${constituencyId}`;
   const cached = cache.get(cacheKey) as ConstituencyResult | undefined;
   if (cached) return cached;
+  const stale = cache.getStale(cacheKey) as ConstituencyResult | undefined;
+  if (stale) {
+    refreshInBackground(cacheKey, () => refreshConstituencyResult(constituencyId, cacheKey));
+    return stale;
+  }
 
+  return refreshConstituencyResult(constituencyId, cacheKey);
+}
+
+async function refreshConstituencyResult(constituencyId: string, cacheKey: string): Promise<ConstituencyResult> {
   const { sourceUrl, summaries } = await getStateSummaries();
   if (!sourceUrl) {
     throw Object.assign(new Error("Live ECI source is not configured yet."), { statusCode: 503, code: "SOURCE_NOT_CONFIGURED" });
@@ -228,8 +243,6 @@ export async function getConstituencyResult(constituencyId: string): Promise<Con
     return result;
   } catch (error) {
     logger.error({ error, constituencyId, sourceUrl: summary.sourceUrl }, "Failed to parse constituency detail page");
-    const stale = cache.getStale(cacheKey) as ConstituencyResult | undefined;
-    if (stale) return stale;
     throw error;
   }
 }
@@ -238,7 +251,16 @@ export async function getPartySummary(): Promise<PartySummaryResponse> {
   const cacheKey = "party-summary";
   const cached = cache.get(cacheKey) as PartySummaryResponse | undefined;
   if (cached) return cached;
+  const stale = cache.getStale(cacheKey) as PartySummaryResponse | undefined;
+  if (stale) {
+    refreshInBackground(cacheKey, () => refreshPartySummary(cacheKey));
+    return stale;
+  }
 
+  return refreshPartySummary(cacheKey);
+}
+
+async function refreshPartySummary(cacheKey: string): Promise<PartySummaryResponse> {
   const sourceConfig = await getSourceConfig();
   const listUrl = resolveConfiguredUrl(sourceConfig, sourceConfig.constituencyListUrl);
   const indexUrl = new URL("index.htm", listUrl).toString();
@@ -260,16 +282,27 @@ export async function getPartySummary(): Promise<PartySummaryResponse> {
     return value;
   } catch (error) {
     logger.error({ error, sourceUrl: indexUrl }, "Failed to parse party summary page");
-    const stale = cache.getStale(cacheKey) as PartySummaryResponse | undefined;
-    if (stale) return stale;
     throw error;
   }
 }
 
 export function clearElectionCache(): void {
   cache.clear();
+  backgroundRefreshes.clear();
   candidateIndex = undefined;
   candidateIndexPromise = undefined;
+}
+
+function refreshInBackground<T>(key: string, task: () => Promise<T>): void {
+  if (backgroundRefreshes.has(key)) return;
+  const promise = task()
+    .catch((error) => {
+      logger.warn({ error, key }, "Background ECI refresh failed; keeping stale data");
+    })
+    .finally(() => {
+      backgroundRefreshes.delete(key);
+    });
+  backgroundRefreshes.set(key, promise);
 }
 
 function filterRequested(summaries: ConstituencySummary[], ids: string[]): ConstituencySummary[] {

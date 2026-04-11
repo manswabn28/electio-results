@@ -22,6 +22,11 @@ export class TtlCache<T> {
     return this.records.get(key)?.value;
   }
 
+  isFresh(key: string): boolean {
+    const record = this.records.get(key);
+    return Boolean(record && Date.now() <= record.expiresAt);
+  }
+
   set(key: string, value: T): void {
     const now = Date.now();
     this.records.set(key, { value, writtenAt: now, expiresAt: now + this.ttlMs });
