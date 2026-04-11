@@ -8,10 +8,14 @@ import { logger } from "./logger.js";
 import { createApiRouter } from "./routes.js";
 
 const app = express();
+const allowedOrigins = config.FRONTEND_ORIGIN.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const corsOrigin = allowedOrigins.includes("*") ? "*" : allowedOrigins;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
-app.use(cors({ origin: config.FRONTEND_ORIGIN, credentials: false }));
+app.use(cors({ origin: corsOrigin, credentials: false }));
 app.use(express.json({ limit: "1mb" }));
 app.use(pinoHttp({ logger }));
 app.use("/api", createApiRouter());

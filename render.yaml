@@ -1,3 +1,6 @@
+previews:
+  generation: manual
+
 services:
   - type: web
     runtime: node
@@ -11,7 +14,7 @@ services:
       - key: NODE_VERSION
         value: 20.11.0
       - key: FRONTEND_ORIGIN
-        value: "*"
+        value: https://kerala-election-dashboard.onrender.com
       - key: ECI_BASE_URL
         value: https://results.eci.gov.in
       - key: ECI_CONSTITUENCY_LIST_URL
@@ -35,7 +38,7 @@ services:
     runtime: static
     name: kerala-election-dashboard
     buildCommand: npm ci && npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/frontend
-    staticPublishPath: apps/frontend/dist
+    staticPublishPath: ./apps/frontend/dist
     envVars:
       - key: NODE_VERSION
         value: 20.11.0
