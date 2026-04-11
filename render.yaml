@@ -1,0 +1,47 @@
+services:
+  - type: web
+    runtime: node
+    name: kerala-election-api
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/backend
+    startCommand: npm run start --workspace @kerala-election/backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: FRONTEND_ORIGIN
+        value: "*"
+      - key: ECI_BASE_URL
+        value: https://results.eci.gov.in
+      - key: ECI_CONSTITUENCY_LIST_URL
+        value: https://results.eci.gov.in/ResultAcGenNov2025/statewiseS041.htm
+      - key: ECI_CANDIDATE_DETAIL_URL_TEMPLATE
+        value: https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm
+      - key: ECI_ELECTION_PATH
+        value: ""
+      - key: ECI_KERALA_STATE_PAGE
+        value: ""
+      - key: ECI_KERALA_STATE_CODE
+        value: ""
+      - key: CACHE_TTL_SECONDS
+        value: 25
+      - key: DEFAULT_FAVORITES
+        value: thrissur,ernakulam,palakkad,nemom
+      - key: REQUEST_TIMEOUT_MS
+        value: 12000
+
+  - type: web
+    runtime: static
+    name: kerala-election-dashboard
+    buildCommand: npm ci && npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/frontend
+    staticPublishPath: apps/frontend/dist
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: VITE_API_BASE_URL
+        value: https://kerala-election-api.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

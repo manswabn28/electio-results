@@ -7,6 +7,13 @@ import type {
   ResultsSummaryResponse
 } from "@kerala-election/shared";
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+
+function apiUrl(path: string): string {
+  if (!apiBaseUrl) return path;
+  return `${apiBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -20,32 +27,32 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function fetchConstituencies() {
-  return request<ConstituenciesResponse>("/api/constituencies");
+  return request<ConstituenciesResponse>(apiUrl("/api/constituencies"));
 }
 
 export function fetchSummary(ids: string[]) {
   const params = new URLSearchParams({ ids: ids.join(",") });
-  return request<ResultsSummaryResponse>(`/api/results/summary?${params}`);
+  return request<ResultsSummaryResponse>(apiUrl(`/api/results/summary?${params}`));
 }
 
 export async function fetchResult(id: string): Promise<ConstituencyResult> {
-  const envelope = await request<ResultEnvelope<ConstituencyResult>>(`/api/results/${encodeURIComponent(id)}`);
+  const envelope = await request<ResultEnvelope<ConstituencyResult>>(apiUrl(`/api/results/${encodeURIComponent(id)}`));
   return envelope.data;
 }
 
 export function fetchSourceConfig() {
-  return request<PublicSourceConfig>("/api/source-config");
+  return request<PublicSourceConfig>(apiUrl("/api/source-config"));
 }
 
 export function fetchPartySummary() {
-  return request<PartySummaryResponse>("/api/party-summary");
+  return request<PartySummaryResponse>(apiUrl("/api/party-summary"));
 }
 
 export function updateSourceConfig(
   password: string,
   payload: Pick<PublicSourceConfig, "baseUrl" | "constituencyListUrl" | "candidateDetailUrlTemplate" | "refreshIntervalSeconds">
 ) {
-  return request<PublicSourceConfig>("/api/admin/source-config", {
+  return request<PublicSourceConfig>(apiUrl("/api/admin/source-config"), {
     method: "PUT",
     headers: {
       "content-type": "application/json",
