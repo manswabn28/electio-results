@@ -54,6 +54,10 @@ services:
         value: 20.11.0
       - key: VITE_API_BASE_URL
         value: https://api-election-results.onrender.com
+      - key: VITE_GA4_MEASUREMENT_ID
+        value: ""
+      - key: VITE_PUBLIC_SITE_URL
+        value: https://results.onekeralam.in
     routes:
       - type: rewrite
         source: /*

@@ -67,6 +67,10 @@ export function sendTrafficHeartbeat(viewerId: string) {
   });
 }
 
+export function apiBaseForDiagnostics() {
+  return apiBaseUrl || "same-origin";
+}
+
 export function updateSourceConfig(
   password: string,
   payload: Pick<PublicSourceConfig, "baseUrl" | "constituencyListUrl" | "candidateDetailUrlTemplate" | "refreshIntervalSeconds">

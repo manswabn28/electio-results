@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
 import type { CandidateOption, ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
-import { fetchCandidates, fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
+import { apiBaseForDiagnostics, fetchCandidates, fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
+import { initAnalytics, trackEvent, trackPageView } from "./analytics";
+import { applySeo } from "./seo";
 
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
@@ -76,6 +78,37 @@ export function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
+
+  useEffect(() => {
+    const marks = new Set<number>();
+    const onScroll = () => {
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+      if (scrollable <= 0) return;
+      const depth = Math.min(100, Math.round((window.scrollY / scrollable) * 100));
+      for (const mark of [25, 50, 75, 100]) {
+        if (depth >= mark && !marks.has(mark)) {
+          marks.add(mark);
+          trackEvent("scroll_depth", { percent: mark });
+        }
+      }
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const selectedCount = selectedIds.length;
+    applySeo({
+      title: selectedCount
+        ? `${selectedCount} Constituencies Tracked | Kerala Election Live`
+        : "Kerala Assembly Election 2026 Live Tracker",
+      description: selectedCount
+        ? `Live ECI-backed Kerala Assembly Election results for ${selectedCount} selected constituencies, including candidate leads, margins, party totals, and updates.`
+        : undefined
+    });
+    initAnalytics();
+    trackPageView(document.title);
+  }, [selectedIds.length]);
 
   useEffect(() => {
     if (!watchMode || !("wakeLock" in navigator)) return;
@@ -411,14 +444,17 @@ export function App() {
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
   const sourceHealth = hasSourceWarning || partySummaryQuery.isError || resultQueries.some((query) => query.isError) ? "Issue" : "ECI OK";
   const enterWatchMode = () => {
+    trackEvent("watch_mode_enter", { selected_count: selectedIds.length });
     setWatchMode(true);
     void document.documentElement.requestFullscreen?.().catch(() => undefined);
   };
   const exitWatchMode = () => {
+    trackEvent("watch_mode_exit", { selected_count: selectedIds.length });
     setWatchMode(false);
     if (document.fullscreenElement) void document.exitFullscreen();
   };
   const togglePinned = (id: string) => {
+    trackEvent("constituency_pin_toggle", { constituency_id: id, pinned: !pinnedIds.includes(id) });
     setPinnedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
   const addWinnerToast = (winner: WinnerNotification) => {
@@ -441,11 +477,13 @@ export function App() {
     const url = `${window.location.origin}${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
     await navigator.clipboard?.writeText(url).catch(() => undefined);
     window.history.replaceState(null, "", url);
+    trackEvent("share_view", { selected_count: selectedIds.length, filter: partyFilter, sort: sortMode });
     setToast("Share link copied for this view.");
     window.setTimeout(() => setToast(""), 3500);
   };
   const manualRefresh = () => {
     if (isFetching) return;
+    trackEvent("refresh_now", { selected_count: selectedIds.length });
     if (resultQueries.length) {
       resultQueries.forEach((query) => void query.refetch());
       void partySummaryQuery.refetch();
@@ -541,6 +579,7 @@ export function App() {
               options={constituenciesQuery.data?.constituencies ?? []}
               selectedIds={selectedIds}
               onChange={(ids) => {
+                trackEvent("constituency_selection_change", { selected_count: ids.length });
                 setSelectedIds(ids);
                 if (!ids.length) setWatchedCandidateIds([]);
               }}
@@ -554,10 +593,18 @@ export function App() {
                 watchedCandidates={watchedCandidates}
                 isLoading={candidatesQuery.isLoading || candidatesQuery.isFetching}
                 onSelect={(candidate) => {
+                  trackEvent("candidate_watch_add", {
+                    candidate_id: candidate.candidateId,
+                    constituency_id: candidate.constituencyId,
+                    party: shortPartyName(candidate.party)
+                  });
                   setWatchedCandidateIds((current) => current.includes(candidate.candidateId) ? current : [...current, candidate.candidateId]);
                   setSelectedIds((current) => current.includes(candidate.constituencyId) ? current : [...current, candidate.constituencyId]);
                 }}
-                onRemove={(candidateId) => setWatchedCandidateIds((current) => current.filter((id) => id !== candidateId))}
+                onRemove={(candidateId) => {
+                  trackEvent("candidate_watch_remove", { candidate_id: candidateId });
+                  setWatchedCandidateIds((current) => current.filter((id) => id !== candidateId));
+                }}
               />
             )}
           </aside>}
