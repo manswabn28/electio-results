@@ -11,7 +11,7 @@ import type {
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 const productionApiBaseUrl =
-  typeof window !== "undefined" && ["kerala-election.onrender.com", "results.onekeralam.in"].includes(window.location.hostname)
+  typeof window !== "undefined" && ["kerala-election.onrender.com", "results.onekeralam.in", "results.onekeralam.com"].includes(window.location.hostname)
     ? "https://api-election-results.onrender.com"
     : "";
 const apiBaseUrl = (configuredApiBaseUrl || productionApiBaseUrl).replace(/\/+$/, "");
