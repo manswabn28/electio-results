@@ -7,7 +7,12 @@ import type {
   ResultsSummaryResponse
 } from "@kerala-election/shared";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+const productionApiBaseUrl =
+  typeof window !== "undefined" && window.location.hostname === "kerala-election.onrender.com"
+    ? "https://api-election-results.onrender.com"
+    : "";
+const apiBaseUrl = (configuredApiBaseUrl || productionApiBaseUrl).replace(/\/+$/, "");
 
 function apiUrl(path: string): string {
   if (!apiBaseUrl) return path;
