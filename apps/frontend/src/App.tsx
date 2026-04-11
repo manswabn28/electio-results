@@ -1634,8 +1634,8 @@ function StatusIcon({ status }: { status: string }) {
 function EmptyState() {
   return (
     <div className="rounded-md border border-dashed border-zinc-300 p-10 text-center dark:border-zinc-700">
-      <h2 className="text-xl font-bold">Choose constituencies to start tracking.</h2>
-      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Your selections stay saved in this browser.</p>
+      <h2 className="text-xl font-bold">Choose constituencies or candidates to start tracking.</h2>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Your watched seats and candidates stay saved in this browser.</p>
     </div>
   );
 }
