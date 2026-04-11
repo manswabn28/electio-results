@@ -168,7 +168,7 @@ export function App() {
   const trafficQuery = useQuery({
     queryKey: ["traffic", viewerId],
     queryFn: () => sendTrafficHeartbeat(viewerId),
-    refetchInterval: 30_000
+    refetchInterval: 20_000
   });
 
   useEffect(() => {
@@ -540,7 +540,10 @@ export function App() {
             <ConstituencySelector
               options={constituenciesQuery.data?.constituencies ?? []}
               selectedIds={selectedIds}
-              onChange={setSelectedIds}
+              onChange={(ids) => {
+                setSelectedIds(ids);
+                if (!ids.length) setWatchedCandidateIds([]);
+              }}
               isLoading={constituenciesQuery.isLoading}
               collapsed={sidebarCollapsed}
               onCollapsedChange={setSidebarCollapsed}
@@ -604,7 +607,7 @@ export function App() {
                 <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="sort">Sort cards</label>
                 <select
                   id="sort"
-                  className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                  className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
                   value={sortMode}
                   onChange={(event) => setSortMode(event.target.value as SortMode)}
                 >
@@ -616,7 +619,7 @@ export function App() {
                 <label className="mt-3 block text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="party-filter">Watch group</label>
                 <select
                   id="party-filter"
-                  className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                  className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
                   value={partyFilter}
                   onChange={(event) => setPartyFilter(event.target.value)}
                 >
@@ -643,7 +646,7 @@ export function App() {
                     type="number"
                     min={100}
                     step={100}
-                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
                     value={alertThreshold}
                     onChange={(event) => setAlertThreshold(Number(event.target.value.replace(/\D/g, "")) || 1000)}
                     title="Close alert margin"
@@ -853,7 +856,7 @@ function LiveAudioPlayer({
         <Volume2 className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
         {expanded ? (
           <select
-            className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-xs font-bold dark:border-zinc-700 dark:bg-zinc-900"
+            className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base font-bold dark:border-zinc-700 dark:bg-zinc-900 sm:text-xs"
             value={selectedChannel.id}
             onChange={(event) => onSelectedChannelIdChange(event.target.value)}
             aria-label="Live channel"
@@ -930,7 +933,7 @@ function CandidateWatchlist({
       <div className="relative mt-3">
         <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
         <input
-          className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-9 pr-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-9 pr-3 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
           placeholder={isLoading ? "Loading candidates..." : "Search candidate"}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -1078,7 +1081,7 @@ function ConstituencySelector({
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
             <input
-              className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-9 pr-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-9 pr-3 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
               placeholder="Search constituency"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1184,21 +1187,21 @@ function SourceConfigPanel({
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="base-url">Base URL</label>
           <input
             id="base-url"
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
             value={baseUrl}
             onChange={(event) => setBaseUrl(event.target.value)}
           />
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="list-url">Constituency list URL</label>
           <input
             id="list-url"
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
             value={constituencyListUrl}
             onChange={(event) => setConstituencyListUrl(event.target.value)}
           />
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="detail-url">Candidate detail URL template</label>
           <input
             id="detail-url"
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
             value={candidateDetailUrlTemplate}
             onChange={(event) => setCandidateDetailUrlTemplate(event.target.value)}
           />
@@ -1217,7 +1220,7 @@ function SourceConfigPanel({
             max={300}
             step={1}
             inputMode="numeric"
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
             value={refreshIntervalSeconds}
             onChange={(event) => setRefreshIntervalSeconds(event.target.value.replace(/\D/g, ""))}
           />
@@ -1225,7 +1228,7 @@ function SourceConfigPanel({
           <input
             id="admin-password"
             type="password"
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
@@ -1378,7 +1381,7 @@ function ResultCard({
       <div className="px-4 pb-4">
         {notesOpen && (
           <textarea
-            className="mt-3 h-16 w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            className="mt-3 h-16 w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-xs"
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
             placeholder="Private note for this seat"
