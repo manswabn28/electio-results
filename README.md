@@ -205,6 +205,12 @@ This repository includes `render.yaml` for a two-service Render deployment:
 - `api-election-results`: Render Web Service running the Express backend.
 - `kerala-election`: Render Static Site serving the Vite frontend from `apps/frontend/dist`.
 
+Both Render services must use the repository root as their Root Directory because the frontend depends on the shared workspace package in `packages/shared`.
+
+```text
+Root Directory: .
+```
+
 The frontend reads the backend endpoint from this build-time environment variable:
 
 ```env
@@ -218,5 +224,12 @@ FRONTEND_ORIGIN=https://kerala-election.onrender.com
 ```
 
 If you rename either Render service, update both values in `render.yaml` before syncing the Blueprint. For local development, leave `VITE_API_BASE_URL` unset to use the Vite `/api` proxy, or copy `apps/frontend/.env.example` and set it explicitly.
+
+If you configure the frontend Static Site manually in the Render dashboard, use:
+
+```text
+Build Command: npm ci && npm run build:frontend
+Publish Directory: ./apps/frontend/dist
+```
 
 Deploy the backend and frontend as separate services, or serve the generated frontend assets from your preferred static host. Keep the backend close to the users if possible, but keep the ECI cache enabled so repeated dashboard refreshes do not multiply source traffic.
