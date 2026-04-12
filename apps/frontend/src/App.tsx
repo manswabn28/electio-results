@@ -776,7 +776,7 @@ export function App() {
                 Track only the constituencies you care about, refreshed every {sourceConfigQuery.data?.refreshIntervalSeconds ?? 30} seconds from configured ECI result pages.
               </p>
             </div>
-            <div className="flex items-center gap-1.5 overflow-x-auto sm:overflow-visible sm:gap-2">
+            <div className="flex flex-wrap items-center gap-2 overflow-visible">
               <QuickAddSearch
                 constituencies={constituencyOptions}
                 candidates={candidateOptions}
@@ -1182,10 +1182,10 @@ function QuickAddSearch({
       ].slice(0, 8);
 
   return (
-    <div className="relative hidden shrink-0 sm:block">
+    <div className="relative w-full sm:w-auto sm:shrink-0">
       <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
       <input
-        className="w-52 rounded-md border border-zinc-300 bg-white py-2 pl-8 pr-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-8 pr-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 sm:w-52"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
@@ -1198,7 +1198,7 @@ function QuickAddSearch({
         aria-label="Quick add seat or candidate"
       />
       {matches.length > 0 && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-md border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="absolute left-0 top-full z-50 mt-2 w-full rounded-md border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 sm:left-auto sm:right-0 sm:w-72">
           {matches.map((item) => (
             <button
               type="button"
