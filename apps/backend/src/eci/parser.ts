@@ -9,6 +9,17 @@ import type {
 import { fallbackKeralaConstituencies, normalizeComparable, slugify } from "../keralaConstituencies.js";
 import { absoluteUrl, cleanText, headerKey, includesAny, toNumber } from "./text.js";
 
+export function extractLinks(html: string, pageUrl: string): { href: string; text: string }[] {
+  const $ = cheerio.load(html);
+  const links: { href: string; text: string }[] = [];
+  $("a[href]").each((_, link) => {
+    const href = $(link).attr("href");
+    if (!href) return;
+    links.push({ href: absoluteUrl(pageUrl, href), text: cleanText($(link).text()) });
+  });
+  return links;
+}
+
 type TableRow = {
   cells: string[];
   hrefs: string[];

@@ -2,6 +2,7 @@ import type {
   CandidatesResponse,
   ConstituenciesResponse,
   ConstituencyResult,
+  DiscoveredSource,
   ResultsDetailsResponse,
   PartySummaryResponse,
   PublicSourceConfig,
@@ -88,5 +89,36 @@ export function updateSourceConfig(
       authorization: `Bearer ${password}`
     },
     body: JSON.stringify(payload)
+  });
+}
+
+export function fetchDiscoveryStatus(password: string) {
+  return request<DiscoveredSource>(apiUrl("/api/admin/source-discovery/status"), {
+    headers: { authorization: `Bearer ${password}` }
+  });
+}
+
+export function runSourceDiscovery(password: string) {
+  return request<DiscoveredSource>(apiUrl("/api/admin/source-discovery/run"), {
+    method: "POST",
+    headers: { authorization: `Bearer ${password}` }
+  });
+}
+
+export function applyDiscoveredSource(password: string) {
+  return request<DiscoveredSource>(apiUrl("/api/admin/source-discovery/apply"), {
+    method: "POST",
+    headers: { authorization: `Bearer ${password}` }
+  });
+}
+
+export function updateDiscoverySchedule(password: string, enabled: boolean) {
+  return request<DiscoveredSource>(apiUrl("/api/admin/source-discovery/schedule"), {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${password}`
+    },
+    body: JSON.stringify({ enabled })
   });
 }

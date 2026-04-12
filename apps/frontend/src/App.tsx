@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, PublicSourceConfig, SortMode } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, fetchCandidates, fetchConstituencies, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
+import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, PublicSourceConfig, SortMode } from "@kerala-election/shared";
+import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSummary, runSourceDiscovery, sendTrafficHeartbeat, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -1815,6 +1815,31 @@ function SourceConfigPanel({
       onUpdated();
     }
   });
+  const discoveryStatusQuery = useQuery({
+    queryKey: ["source-discovery-status"],
+    queryFn: () => fetchDiscoveryStatus(password),
+    enabled: open && unlocked,
+    refetchInterval: open && unlocked ? 30_000 : false
+  });
+  const discoveryRunMutation = useMutation({
+    mutationFn: () => runSourceDiscovery(password),
+    onSuccess: () => {
+      void discoveryStatusQuery.refetch();
+    }
+  });
+  const discoveryApplyMutation = useMutation({
+    mutationFn: () => applyDiscoveredSource(password),
+    onSuccess: () => {
+      onUpdated();
+      void discoveryStatusQuery.refetch();
+    }
+  });
+  const discoveryScheduleMutation = useMutation({
+    mutationFn: (enabled: boolean) => updateDiscoverySchedule(password, enabled),
+    onSuccess: () => {
+      void discoveryStatusQuery.refetch();
+    }
+  });
   const applyKeralaPreset = () => {
     const list = constituencyListUrl || "https://results.eci.gov.in/Kerala2026/statewiseS111.htm";
     const match = list.match(/^(.*\/)(statewise)(S\d+?)1\.htm$/i);
@@ -1871,6 +1896,11 @@ function SourceConfigPanel({
           )}
           {unlocked && (
             <>
+          {!sourceConfig && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs font-semibold text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+              Loading saved source settings from backend...
+            </div>
+          )}
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="base-url">Base URL</label>
           <input
             id="base-url"
@@ -1907,6 +1937,25 @@ function SourceConfigPanel({
           >
             Election day mode
           </button>
+          <SourceDiscoveryAdmin
+            status={discoveryStatusQuery.data}
+            isLoading={discoveryStatusQuery.isLoading || discoveryRunMutation.isPending}
+            isApplying={discoveryApplyMutation.isPending}
+            error={
+              discoveryRunMutation.error instanceof Error
+                ? discoveryRunMutation.error.message
+                : discoveryApplyMutation.error instanceof Error
+                  ? discoveryApplyMutation.error.message
+                  : discoveryScheduleMutation.error instanceof Error
+                    ? discoveryScheduleMutation.error.message
+                    : discoveryStatusQuery.error instanceof Error
+                      ? discoveryStatusQuery.error.message
+                      : undefined
+            }
+            onRun={() => discoveryRunMutation.mutate()}
+            onApply={() => discoveryApplyMutation.mutate()}
+            onScheduleChange={(enabled) => discoveryScheduleMutation.mutate(enabled)}
+          />
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="refresh-seconds">Refresh seconds</label>
           <input
             id="refresh-seconds"
@@ -1945,6 +1994,92 @@ function SourceConfigPanel({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function SourceDiscoveryAdmin({
+  status,
+  isLoading,
+  isApplying,
+  error,
+  onRun,
+  onApply,
+  onScheduleChange
+}: {
+  status?: DiscoveredSource;
+  isLoading: boolean;
+  isApplying: boolean;
+  error?: string;
+  onRun: () => void;
+  onApply: () => void;
+  onScheduleChange: (enabled: boolean) => void;
+}) {
+  const canApply = Boolean(status?.constituencyListUrl && status?.candidateDetailUrlTemplate && !status.alreadyCurrent && status.confidence >= 60);
+  const schedule = status?.schedule;
+  return (
+    <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-300">ECI auto discovery</div>
+          <div className="mt-1 text-[11px] font-semibold leading-4 text-zinc-500">
+            Scheduled: May 4, 2026, 5:30-7:00 AM IST. Fast checks from 5:55 AM.
+          </div>
+        </div>
+        <span className={`rounded-md px-2 py-1 text-[10px] font-black uppercase ${schedule?.activeNow ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" : schedule?.enabled ? "bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300" : "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-100"}`}>
+          {schedule?.activeNow ? "Active" : schedule?.enabled ? "On" : "Off"}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-2 rounded-md bg-zinc-50 px-2 py-2 text-[10px] font-semibold text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+        <div>
+          <div>Backend discovery service: {schedule?.enabled ? "On" : "Off"}</div>
+          <div className="mt-0.5">
+            {schedule?.activeNow
+              ? `Running now; interval ${schedule.intenseIntervalSeconds}s near counting start.`
+              : schedule?.nextRunAt
+                ? `Next scheduled check: ${new Date(schedule.nextRunAt).toLocaleString()}`
+                : "No upcoming scheduled check in the active window."}
+          </div>
+        </div>
+        <button
+          className={`rounded-md px-2 py-1 text-[10px] font-black ${schedule?.enabled ? "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-100" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100"}`}
+          onClick={() => onScheduleChange(!schedule?.enabled)}
+          type="button"
+        >
+          {schedule?.enabled ? "Turn off" : "Turn on"}
+        </button>
+      </div>
+      <div className="mt-2 text-[11px] leading-4 text-zinc-500">
+        {status?.alreadyCurrent
+          ? "Current URLs are already validated. Confirm them below; no discovery run is needed unless ECI changes the source."
+          : status?.message ?? "Backend discovery will scan official ECI result links and validate Kerala pages before applying."}
+      </div>
+      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} · Confidence {status.confidence}%</div>}
+      {status?.constituencyListUrl && (
+        <div className="mt-2 truncate text-[10px] text-zinc-500" title={status.constituencyListUrl}>
+          Found: {status.constituencyCount ?? 0} seats · {status.sampleVerified ? "details verified" : "details pending"}
+        </div>
+      )}
+      {status?.status === "applied" && (
+        <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-[10px] leading-4 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
+          <div className="font-black uppercase tracking-wide">Auto-apply report</div>
+          <div>Applied: {status.appliedAt ? new Date(status.appliedAt).toLocaleString() : "-"}</div>
+          <div>Confidence: {status.confidence}% · Seats: {status.constituencyCount ?? 0} · Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
+          <div className="mt-1 truncate" title={status.constituencyListUrl}>List: {status.constituencyListUrl}</div>
+          <div className="truncate" title={status.candidateDetailUrlTemplate}>Detail: {status.candidateDetailUrlTemplate}</div>
+          {status.partySummaryUrl && <div className="truncate" title={status.partySummaryUrl}>Summary: {status.partySummaryUrl}</div>}
+        </div>
+      )}
+      {status?.warnings?.length ? <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">{status.warnings[0]}</div> : null}
+      {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onRun} disabled={isLoading} type="button">
+          {isLoading ? "Checking..." : status?.alreadyCurrent ? "Check again" : "Auto discover"}
+        </button>
+        <button className="btn-press-dark rounded-md bg-zinc-950 px-2 py-1.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50 dark:border dark:border-zinc-700 dark:bg-zinc-900" onClick={onApply} disabled={!canApply || isApplying} type="button">
+          {isApplying ? "Applying..." : "Apply found"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import type { Request, Response, Router } from "express";
 import express from "express";
 import { clearElectionCache, getCandidateIndex, getConstituencies, getConstituencyResult, getConstituencyResults, getPartySummary, getSummary } from "./eci/service.js";
+import { applyDiscoveredSource, getDiscoveryStatus, runSourceDiscovery, setDiscoveryScheduleEnabled } from "./eci/discovery.js";
 import { getSourceConfig, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
 import { recordViewer } from "./traffic.js";
 
@@ -30,6 +31,24 @@ export function createApiRouter(): Router {
     });
     clearElectionCache();
     res.json(toPublicSourceConfig(next));
+  }));
+
+  router.get("/admin/source-discovery/status", requireAdmin, asyncHandler(async (_req, res) => {
+    res.json(getDiscoveryStatus());
+  }));
+
+  router.post("/admin/source-discovery/run", requireAdmin, asyncHandler(async (_req, res) => {
+    res.json(await runSourceDiscovery({ autoApply: false, skipIfCurrent: true }));
+  }));
+
+  router.put("/admin/source-discovery/schedule", requireAdmin, asyncHandler(async (req, res) => {
+    res.json(setDiscoveryScheduleEnabled(Boolean(req.body?.enabled)));
+  }));
+
+  router.post("/admin/source-discovery/apply", requireAdmin, asyncHandler(async (_req, res) => {
+    const applied = await applyDiscoveredSource();
+    clearElectionCache();
+    res.json(applied);
   }));
 
   router.get("/constituencies", asyncHandler(async (_req, res) => {

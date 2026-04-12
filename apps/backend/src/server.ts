@@ -6,6 +6,7 @@ import { pinoHttp } from "pino-http";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { createApiRouter } from "./routes.js";
+import { startDiscoveryScheduler } from "./eci/discovery.js";
 
 const app = express();
 const allowedOrigins = new Set(
@@ -46,6 +47,7 @@ app.use((_req, res) => {
 });
 
 app.listen(config.PORT, () => {
+  startDiscoveryScheduler();
   logger.info(
     {
       port: config.PORT,

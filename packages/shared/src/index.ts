@@ -130,6 +130,35 @@ export type PublicSourceConfig = {
   adminEnabled: boolean;
 };
 
+export type DiscoveredSource = {
+  confidence: number;
+  status: "idle" | "running" | "found" | "applied" | "skipped" | "failed";
+  checkedAt?: string;
+  appliedAt?: string;
+  eventFolderUrl?: string;
+  constituencyListUrl?: string;
+  candidateDetailUrlTemplate?: string;
+  partySummaryUrl?: string;
+  stateName?: string;
+  constituencyCount?: number;
+  sampleVerified?: boolean;
+  alreadyCurrent?: boolean;
+  autoApplied?: boolean;
+  warnings: string[];
+  message: string;
+  schedule: {
+    enabled: boolean;
+    timezone: string;
+    startAt: string;
+    intenseStartAt: string;
+    endAt: string;
+    normalIntervalSeconds: number;
+    intenseIntervalSeconds: number;
+    nextRunAt?: string;
+    activeNow: boolean;
+  };
+};
+
 export type PartySeatSummary = {
   party: string;
   won: number;
