@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ConstituencyOption, ConstituencyResult, PublicSourceConfig, SortMode } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, fetchCandidates, fetchConstituencies, fetchPartySummary, fetchResult, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
+import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, PublicSourceConfig, SortMode } from "@kerala-election/shared";
+import { apiBaseForDiagnostics, fetchCandidates, fetchConstituencies, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSummary, sendTrafficHeartbeat, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -12,6 +12,9 @@ const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
 const VIEWER_ID_STORAGE_KEY = "kerala-election:viewer-id";
 const TIGHT_MARGIN_LIMIT = 5000;
+const HIGH_TIGHT_MARGIN_LIMIT = 1000;
+const TIGHT_RACE_NOTIFY_MIN_PROGRESS = 25;
+const ADMIN_PASSWORD = "ldfudf#2026";
 
 const LIVE_CHANNELS = [
   { id: "reporter-tv", label: "Reporter Live", videoId: "nObUcHKZEGY" },
@@ -44,6 +47,33 @@ type LostNotification = WinnerNotification & {
   winnerName: string;
 };
 
+type TightRaceNotification = {
+  id: string;
+  constituencyId: string;
+  constituencyName: string;
+  leadingCandidate: string;
+  leadingCandidatePhotoUrl?: string;
+  margin: number;
+  declared: boolean;
+  demo?: boolean;
+};
+
+type AlertRules = {
+  leaderChange: boolean;
+  winnerDeclared: boolean;
+  highTightRace: boolean;
+  candidateWatch: boolean;
+};
+
+type WatchProfile = {
+  name: string;
+  selectedIds: string[];
+  watchedCandidateIds: string[];
+  pinnedIds: string[];
+  partyFilter: string;
+  sortMode: SortMode;
+};
+
 export function App() {
   const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useLocalStorageState<string[]>(SELECTED_STORAGE_KEY, []);
@@ -67,6 +97,15 @@ export function App() {
   const [leaderHistory, setLeaderHistory] = useLocalStorageState<Record<string, LeaderHistoryEntry[]>>("kerala-election:leader-history", {});
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
   const [alertThreshold, setAlertThreshold] = useLocalStorageState<number>("kerala-election:alert-threshold", 1000);
+  const [alertRules, setAlertRules] = useLocalStorageState<AlertRules>("kerala-election:alert-rules", {
+    leaderChange: true,
+    winnerDeclared: true,
+    highTightRace: true,
+    candidateWatch: true
+  });
+  const [watchProfiles, setWatchProfiles] = useLocalStorageState<WatchProfile[]>("kerala-election:watch-profiles", []);
+  const [profileName, setProfileName] = useLocalStorageState<string>("kerala-election:profile-name", "My watchlist");
+  const [seenCandidateWatchIds, setSeenCandidateWatchIds] = useLocalStorageState<string[]>("kerala-election:seen-candidate-watch-alerts", []);
   const [seenWinnerIds, setSeenWinnerIds] = useLocalStorageState<string[]>("kerala-election:seen-winner-notifications", []);
   const [seenLostIds, setSeenLostIds] = useLocalStorageState<string[]>("kerala-election:seen-lost-notifications", []);
   const [viewerId] = useLocalStorageState<string>(VIEWER_ID_STORAGE_KEY, () => crypto.randomUUID());
@@ -76,6 +115,9 @@ export function App() {
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
   const [lostToasts, setLostToasts] = useState<LostNotification[]>([]);
+  const [tightRaceToasts, setTightRaceToasts] = useState<TightRaceNotification[]>([]);
+  const [seenTightRaceIds, setSeenTightRaceIds] = useLocalStorageState<string[]>("kerala-election:seen-tight-race-notifications", []);
+  const pendingTightRaceToastIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -182,7 +224,13 @@ export function App() {
     if (filter) setPartyFilter(filter);
     const sort = params.get("sort") as SortMode | null;
     if (sort && ["selected", "marginAsc", "marginDesc", "leader"].includes(sort)) setSortMode(sort);
-  }, [setPartyFilter, setSelectedIds, setSortMode]);
+    const candidates = params.get("candidates");
+    if (candidates) setWatchedCandidateIds(candidates.split(",").map((item) => item.trim()).filter(Boolean));
+    const pinned = params.get("pinned");
+    if (pinned) setPinnedIds(pinned.split(",").map((item) => item.trim()).filter(Boolean));
+    const threshold = Number(params.get("alert"));
+    if (Number.isFinite(threshold) && threshold > 0) setAlertThreshold(threshold);
+  }, [setAlertThreshold, setPartyFilter, setPinnedIds, setSelectedIds, setSortMode, setWatchedCandidateIds]);
 
   const constituenciesQuery = useQuery({
     queryKey: ["constituencies"],
@@ -242,6 +290,22 @@ export function App() {
     const byId = new Map(candidateOptions.map((candidate) => [candidate.candidateId, candidate]));
     return watchedCandidateIds.map((id) => byId.get(id)).filter(Boolean) as CandidateOption[];
   }, [candidateOptions, watchedCandidateIds]);
+  useEffect(() => {
+    if (!watchedCandidates.length) return;
+    const ids = watchedCandidates.map((candidate) => candidate.constituencyId);
+    setSelectedIds((current) => {
+      const next = [...new Set([...current, ...ids])];
+      return next.length === current.length ? current : next;
+    });
+  }, [setSelectedIds, watchedCandidates]);
+  const candidatePhotoLookup = useMemo(() => {
+    const lookup = new Map<string, string>();
+    for (const candidate of candidateOptions) {
+      if (!candidate.photoUrl) continue;
+      lookup.set(`${candidate.constituencyId}:${normalizeCandidateName(candidate.candidateName)}`, candidate.photoUrl);
+    }
+    return lookup;
+  }, [candidateOptions]);
 
   const summaryQuery = useQuery({
     queryKey: ["summary", selectedIds],
@@ -264,17 +328,32 @@ export function App() {
     refetchInterval: refreshMs
   });
 
-  const resultQueries = useQueries({
-    queries: selectedIds.map((id) => ({
-      queryKey: ["result", id],
-      queryFn: () => fetchResult(id),
-      enabled: selectedIds.length > 0 && Boolean(summaryQuery.data?.sourceConfigured),
-      refetchInterval: refreshMs
-    }))
+  const detailResultsQuery = useQuery({
+    queryKey: ["results", "details", selectedIds],
+    queryFn: () => fetchResults(selectedIds),
+    enabled: selectedIds.length > 0 && Boolean(summaryQuery.data?.sourceConfigured),
+    refetchInterval: refreshMs,
+    retry: 3,
+    retryDelay: (attempt: number) => Math.min(12000, 1500 * 2 ** attempt)
   });
 
-  const isFetching = constituenciesQuery.isFetching || summaryQuery.isFetching || allSummaryQuery.isFetching || resultQueries.some((query) => query.isFetching);
-  const lastSuccessAt = latestDataUpdatedAt(resultQueries.map((query) => query.dataUpdatedAt));
+  const detailResultsById = useMemo(() => new Map((detailResultsQuery.data?.results ?? []).map((result) => [result.constituencyId, result])), [detailResultsQuery.data?.results]);
+  const detailErrorsById = useMemo(() => new Map((detailResultsQuery.data?.errors ?? []).map((error) => [error.constituencyId ?? "", error])), [detailResultsQuery.data?.errors]);
+  const resultQueries = useMemo(() => selectedIds.map((id) => {
+    const apiError = detailErrorsById.get(id);
+    return {
+      data: detailResultsById.get(id),
+      dataUpdatedAt: detailResultsQuery.dataUpdatedAt,
+      error: apiError ? new Error(apiError.message) : detailResultsQuery.error,
+      isError: Boolean(apiError) || detailResultsQuery.isError,
+      isFetching: detailResultsQuery.isFetching,
+      isLoading: detailResultsQuery.isLoading,
+      refetch: detailResultsQuery.refetch
+    };
+  }), [detailErrorsById, detailResultsById, detailResultsQuery.dataUpdatedAt, detailResultsQuery.error, detailResultsQuery.isError, detailResultsQuery.isFetching, detailResultsQuery.isLoading, detailResultsQuery.refetch, selectedIds]);
+
+  const isFetching = constituenciesQuery.isFetching || summaryQuery.isFetching || allSummaryQuery.isFetching || detailResultsQuery.isFetching;
+  const lastSuccessAt = detailResultsQuery.dataUpdatedAt || latestDataUpdatedAt(resultQueries.map((query) => query.dataUpdatedAt));
   const countdown = useCountdown(refreshMs, lastSuccessAt);
 
   const liveResults = useMemo(
@@ -285,6 +364,16 @@ export function App() {
     const entries = selectedIds.map((id, index) => [id, resultQueries[index]?.dataUpdatedAt || 0] as const);
     return Object.fromEntries(entries);
   }, [resultQueries, selectedIds]);
+  const resultFreshnessById = useMemo<Record<string, "Fresh" | "Cached" | "Stale">>(() => {
+    const liveIds = new Set(liveResults.map((result) => result.constituencyId));
+    const now = Date.now();
+    return Object.fromEntries(selectedIds.map((id) => {
+      const checkedAt = checkedAtById[id] || lastCheckedById[id] || 0;
+      if (!liveIds.has(id)) return [id, "Cached"] as const;
+      if (checkedAt && now - checkedAt > refreshMs * 2.5) return [id, "Stale"] as const;
+      return [id, "Fresh"] as const;
+    }));
+  }, [checkedAtById, lastCheckedById, liveResults, refreshMs, selectedIds]);
   const results = useMemo(() => {
     const liveById = new Map(liveResults.map((result) => [result.constituencyId, result]));
     return selectedIds
@@ -300,8 +389,8 @@ export function App() {
   }, [previousResults, results]);
 
   useEffect(() => {
-    if (soundEnabled && leaderChanges.length) playLeaderAlert();
-  }, [leaderChanges.length, soundEnabled]);
+    if (soundEnabled && alertRules.leaderChange && leaderChanges.length) playLeaderAlert();
+  }, [alertRules.leaderChange, leaderChanges.length, soundEnabled]);
 
   useEffect(() => {
     if (!liveResults.length) return;
@@ -330,6 +419,7 @@ export function App() {
   }, [checkedAtById, liveResults, setCachedResults, setLastCheckedById]);
 
   useEffect(() => {
+    if (!alertRules.winnerDeclared) return;
     const summaries = allSummaryQuery.data?.results ?? [];
     if (!summaries.length) return;
 
@@ -373,7 +463,7 @@ export function App() {
           });
       }, index * 4500);
     });
-  }, [allSummaryQuery.data?.results, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
+  }, [alertRules.winnerDeclared, allSummaryQuery.data?.results, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
 
   useEffect(() => {
     const closeDeclaredLosses = liveResults.filter((result) => {
@@ -448,9 +538,114 @@ export function App() {
     }
   }, [alertThreshold, previousResults, results, setLastChangedAt, setLeaderHistory]);
 
+  useEffect(() => {
+    if (!alertRules.candidateWatch || !watchedCandidates.length || !liveResults.length) return;
+    const watchedBySeat = new Map<string, CandidateOption[]>();
+    for (const candidate of watchedCandidates) {
+      watchedBySeat.set(candidate.constituencyId, [...(watchedBySeat.get(candidate.constituencyId) ?? []), candidate]);
+    }
+    const events: string[] = [];
+    for (const result of liveResults) {
+      const watched = watchedBySeat.get(result.constituencyId) ?? [];
+      if (!watched.length) continue;
+      const leader = result.candidates[0]?.candidateName ?? "";
+      const runner = result.candidates[1]?.candidateName ?? "";
+      const declared = isDeclaredWinner(result.statusText || result.roundStatus);
+      for (const candidate of watched) {
+        const name = normalizeCandidateName(candidate.candidateName);
+        const position = normalizeCandidateName(leader) === name ? "leader" : normalizeCandidateName(runner) === name ? "second" : "";
+        if (!position && !declared) continue;
+        const eventId = `${result.constituencyId}:${candidate.candidateId}:${declared ? "declared" : position}:${result.margin}`;
+        if (seenCandidateWatchIds.includes(eventId)) continue;
+        events.push(eventId);
+        const message = declared && position === "leader"
+          ? `${candidate.candidateName} won ${result.constituencyName} by ${formatNumber(result.margin)}.`
+          : declared
+            ? `${candidate.candidateName} finished ${position || "outside top two"} in ${result.constituencyName}.`
+            : `${candidate.candidateName} is ${position} in ${result.constituencyName}.`;
+        setToast(message);
+        window.setTimeout(() => setToast(""), 5000);
+        if (soundEnabled && (position === "leader" || declared)) playLeaderAlert();
+        break;
+      }
+    }
+    if (events.length) setSeenCandidateWatchIds((current) => [...new Set([...current, ...events])]);
+  }, [alertRules.candidateWatch, liveResults, seenCandidateWatchIds, setSeenCandidateWatchIds, soundEnabled, watchedCandidates]);
+
   const partyOptions = useMemo(() => {
     return [...new Set(results.map((result) => result.leadingParty || result.candidates[0]?.party).filter(Boolean))].sort();
   }, [results]);
+  const tightRaceSuggestions = useMemo(() => {
+    const selected = new Set(selectedIds);
+    const all = allSummaryQuery.data?.results ?? [];
+    const active = all
+      .filter((summary) => !selected.has(summary.constituencyId))
+      .filter((summary) => !isDeclaredWinner(summary.statusText || summary.roundStatus))
+      .filter((summary) => summary.margin > 0 && summary.margin <= TIGHT_MARGIN_LIMIT)
+      .sort((a, b) => a.margin - b.margin)
+      .slice(0, 6);
+    if (active.length) return active;
+    return all
+      .filter((summary) => !selected.has(summary.constituencyId))
+      .filter((summary) => isDeclaredWinner(summary.statusText || summary.roundStatus))
+      .filter((summary) => summary.margin > 0 && summary.margin <= TIGHT_MARGIN_LIMIT)
+      .sort((a, b) => a.margin - b.margin)
+      .slice(0, 6);
+  }, [allSummaryQuery.data?.results, selectedIds]);
+  const tightRaceNotificationCandidates = useMemo(() => {
+    const realCandidates = tightRaceSuggestions
+      .filter((summary) => isNotificationWorthyTightRace(summary))
+      .map((summary) => ({ summary, demo: false }));
+    if (realCandidates.length) return realCandidates;
+    if (!import.meta.env.DEV) return [];
+
+    const selected = new Set(selectedIds);
+    return (allSummaryQuery.data?.results ?? [])
+      .filter((summary) => !selected.has(summary.constituencyId))
+      .filter((summary) => isDeclaredWinner(summary.statusText || summary.roundStatus))
+      .filter((summary) => summary.margin > 0)
+      .sort((a, b) => a.margin - b.margin)
+      .slice(0, 2)
+      .map((summary) => ({ summary, demo: true }));
+  }, [allSummaryQuery.data?.results, selectedIds, tightRaceSuggestions]);
+  useEffect(() => {
+    const selected = new Set(selectedIds);
+    const candidates = tightRaceNotificationCandidates
+      .filter(({ summary }) => !selected.has(summary.constituencyId))
+      .filter(({ summary, demo }) => {
+        const id = tightRaceNotificationKey(summary, demo);
+        return !seenTightRaceIds.includes(id) && !pendingTightRaceToastIds.current.has(id);
+      })
+      .slice(0, 2);
+    if (!candidates.length) return;
+
+    const timers = candidates.map(({ summary, demo }, index) => {
+      const id = tightRaceNotificationKey(summary, demo);
+      pendingTightRaceToastIds.current.add(id);
+      return window.setTimeout(() => {
+        addTightRaceToast({
+          id,
+          constituencyId: summary.constituencyId,
+          constituencyName: summary.constituencyName,
+          leadingCandidate: summary.leadingCandidate || "Leader",
+          leadingCandidatePhotoUrl: candidatePhotoLookup.get(`${summary.constituencyId}:${normalizeCandidateName(summary.leadingCandidate)}`),
+          margin: summary.margin,
+          declared: isDeclaredWinner(summary.statusText || summary.roundStatus),
+          demo
+        });
+        setSeenTightRaceIds((current) => current.includes(id) ? current : [...current, id]);
+        pendingTightRaceToastIds.current.delete(id);
+        if (!demo && soundEnabled && alertRules.highTightRace && summary.margin <= HIGH_TIGHT_MARGIN_LIMIT) playLeaderAlert();
+      }, index * 4500);
+    });
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      candidates.forEach(({ summary, demo }) => {
+        pendingTightRaceToastIds.current.delete(tightRaceNotificationKey(summary, demo));
+      });
+    };
+  }, [alertRules.highTightRace, candidatePhotoLookup, selectedIds, seenTightRaceIds, setSeenTightRaceIds, soundEnabled, tightRaceNotificationCandidates]);
   const visibleResults = useMemo(() => {
     return results.filter((result) => {
       if (partyFilter === "all") return true;
@@ -461,7 +656,14 @@ export function App() {
   }, [partyFilter, results]);
   const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds);
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
-  const sourceHealth = hasSourceWarning || partySummaryQuery.isError || resultQueries.some((query) => query.isError) ? "Issue" : "ECI OK";
+  const lastEciChangeAt = latestDataUpdatedAt(Object.values(lastChangedAt));
+  const sourceHealth = hasSourceWarning || partySummaryQuery.isError || resultQueries.some((query) => query.isError)
+    ? "ECI issue"
+    : isFetching
+      ? "Syncing"
+      : lastEciChangeAt
+        ? `Changed ${new Date(lastEciChangeAt).toLocaleTimeString()}`
+        : "ECI OK";
   const enterWatchMode = () => {
     trackEvent("watch_mode_enter", { selected_count: selectedIds.length });
     setWatchMode(true);
@@ -476,6 +678,15 @@ export function App() {
     trackEvent("constituency_pin_toggle", { constituency_id: id, pinned: !pinnedIds.includes(id) });
     setPinnedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
+  const removeSelectedConstituency = (id: string) => {
+    trackEvent("constituency_card_remove", { constituency_id: id });
+    setSelectedIds((current) => current.filter((item) => item !== id));
+    setPinnedIds((current) => current.filter((item) => item !== id));
+    const watchedInSeat = new Set(candidateOptions.filter((candidate) => candidate.constituencyId === id).map((candidate) => candidate.candidateId));
+    if (watchedInSeat.size) {
+      setWatchedCandidateIds((current) => current.filter((candidateId) => !watchedInSeat.has(candidateId)));
+    }
+  };
   const addWinnerToast = (winner: WinnerNotification) => {
     setWinnerToasts((current) => [...current.filter((item) => item.id !== winner.id), winner].slice(-5));
     window.setTimeout(() => {
@@ -488,23 +699,64 @@ export function App() {
       setLostToasts((current) => current.filter((item) => item.id !== lost.id));
     }, 12000);
   };
+  const addTightRaceToast = (race: TightRaceNotification) => {
+    setTightRaceToasts((current) => [...current.filter((item) => item.id !== race.id), race].slice(-3));
+    window.setTimeout(() => {
+      setTightRaceToasts((current) => current.filter((item) => item.id !== race.id));
+    }, 10000);
+  };
   const shareView = async () => {
     const params = new URLSearchParams();
     if (selectedIds.length) params.set("seats", selectedIds.join(","));
+    if (watchedCandidateIds.length) params.set("candidates", watchedCandidateIds.join(","));
+    if (pinnedIds.length) params.set("pinned", pinnedIds.join(","));
     if (partyFilter !== "all") params.set("filter", partyFilter);
     if (sortMode !== "selected") params.set("sort", sortMode);
+    if (alertThreshold !== 1000) params.set("alert", String(alertThreshold));
     const url = `${window.location.origin}${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
     await navigator.clipboard?.writeText(url).catch(() => undefined);
     window.history.replaceState(null, "", url);
-    trackEvent("share_view", { selected_count: selectedIds.length, filter: partyFilter, sort: sortMode });
+    trackEvent("share_view", { selected_count: selectedIds.length, candidate_count: watchedCandidateIds.length, filter: partyFilter, sort: sortMode });
     setToast("Share link copied for this view.");
     window.setTimeout(() => setToast(""), 3500);
+  };
+  const applySeatPreset = (preset: "favorites" | "tight" | "leaders") => {
+    let ids: string[] = [];
+    if (preset === "favorites") {
+      ids = constituencyOptions.filter((option) => option.isFavoriteDefault).map((option) => option.constituencyId);
+    } else if (preset === "tight") {
+      ids = tightRaceSuggestions.map((summary) => summary.constituencyId);
+    } else {
+      ids = allSummaryQuery.data?.results
+        ?.filter((summary) => summary.leadingParty && summary.margin > 0)
+        .sort((a, b) => b.margin - a.margin)
+        .slice(0, 6)
+        .map((summary) => summary.constituencyId) ?? [];
+    }
+    if (!ids.length) return;
+    trackEvent("preset_apply", { preset, count: ids.length });
+    setSelectedIds((current) => [...new Set([...current, ...ids])]);
+  };
+  const saveWatchProfile = () => {
+    const name = profileName.trim() || "Home";
+    const profile: WatchProfile = { name, selectedIds, watchedCandidateIds, pinnedIds, partyFilter, sortMode };
+    setWatchProfiles((current) => [profile, ...current.filter((item) => item.name !== name)].slice(0, 5));
+    setToast(`${name} profile saved.`);
+    window.setTimeout(() => setToast(""), 2500);
+  };
+  const loadWatchProfile = (profile: WatchProfile) => {
+    setSelectedIds(profile.selectedIds);
+    setWatchedCandidateIds(profile.watchedCandidateIds);
+    setPinnedIds(profile.pinnedIds);
+    setPartyFilter(profile.partyFilter);
+    setSortMode(profile.sortMode);
+    trackEvent("profile_load", { name: profile.name, selected_count: profile.selectedIds.length });
   };
   const manualRefresh = () => {
     if (isFetching) return;
     trackEvent("refresh_now", { selected_count: selectedIds.length });
-    if (resultQueries.length) {
-      resultQueries.forEach((query) => void query.refetch());
+    if (selectedIds.length) {
+      void detailResultsQuery.refetch();
       void partySummaryQuery.refetch();
       void allSummaryQuery.refetch();
     } else {
@@ -524,17 +776,26 @@ export function App() {
                 Track only the constituencies you care about, refreshed every {sourceConfigQuery.data?.refreshIntervalSeconds ?? 30} seconds from configured ECI result pages.
               </p>
             </div>
-            <div className="flex items-center gap-1.5 overflow-x-auto sm:gap-2">
-              <button className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => setDarkMode(!darkMode)}>
+            <div className="flex items-center gap-1.5 overflow-x-auto sm:overflow-visible sm:gap-2">
+              <QuickAddSearch
+                constituencies={constituencyOptions}
+                candidates={candidateOptions}
+                onAdd={(constituencyId, candidateId) => {
+                  trackEvent("quick_add", { constituency_id: constituencyId, has_candidate: Boolean(candidateId) });
+                  setSelectedIds((current) => current.includes(constituencyId) ? current : [...current, constituencyId]);
+                  if (candidateId) setWatchedCandidateIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
+                }}
+              />
+              <button className="btn-press rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => setDarkMode(!darkMode)}>
                 {darkMode ? <Sun className="mr-2 inline h-4 w-4" /> : <Moon className="mr-2 inline h-4 w-4" />}
                 {darkMode ? "Light" : "Dark"}
               </button>
-              <button className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => setSoundEnabled(!soundEnabled)}>
+              <button className="btn-press rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => setSoundEnabled(!soundEnabled)}>
                 <Bell className="mr-2 inline h-4 w-4" />
                 Alerts {soundEnabled ? "On" : "Off"}
               </button>
               <button
-                className="rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-zinc-950"
+                className="btn-press-dark rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                 onClick={manualRefresh}
                 disabled={isFetching}
               >
@@ -542,7 +803,7 @@ export function App() {
                 Refresh Now
               </button>
               <button
-                className="shrink-0 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
+                className="btn-press shrink-0 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
                 onClick={enterWatchMode}
                 title="Watch mode"
                 aria-label="Watch mode"
@@ -658,8 +919,10 @@ export function App() {
                 result={result}
                 previous={previousResults.get(result.constituencyId)}
                 checkedAt={checkedAtById[result.constituencyId] || lastCheckedById[result.constituencyId] || lastSuccessAt}
+                freshness={resultFreshnessById[result.constituencyId] ?? "Cached"}
                 isPinned={pinnedIds.includes(result.constituencyId)}
                 onTogglePin={() => togglePinned(result.constituencyId)}
+                onRemove={() => removeSelectedConstituency(result.constituencyId)}
                 changedAt={lastChangedAt[result.constituencyId]}
                 leaderChanged={leaderChanges.some((item) => item.constituencyId === result.constituencyId)}
                 history={leaderHistory[result.constituencyId] ?? []}
@@ -669,7 +932,7 @@ export function App() {
             ))}
           </div>
           {!watchMode && !sidebarCollapsed && (
-            <div className="order-3 flex flex-col gap-4 lg:col-start-1 lg:row-start-2">
+            <div id="controls-pane" className="order-3 flex flex-col gap-4 lg:col-start-1 lg:row-start-2">
               <div className="panel rounded-md p-4">
                 <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="sort">Sort cards</label>
                 <select
@@ -722,7 +985,43 @@ export function App() {
                     <Share2 className="h-4 w-4" />
                   </button>
                 </div>
+                <div className="mt-3 grid grid-cols-3 gap-1.5">
+                  <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-800 active:scale-[0.98] active:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-200" onClick={() => applySeatPreset("favorites")}>
+                    Key
+                  </button>
+                  <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-amber-500 hover:bg-amber-50 hover:text-amber-800 active:scale-[0.98] active:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-amber-700 dark:hover:bg-amber-950/50 dark:hover:text-amber-200" onClick={() => applySeatPreset("tight")}>
+                    Tight
+                  </button>
+                  <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-sky-500 hover:bg-sky-50 hover:text-sky-800 active:scale-[0.98] active:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/50 dark:hover:text-sky-200" onClick={() => applySeatPreset("leaders")}>
+                    Leads
+                  </button>
+                </div>
+                <AlertRulesControl rules={alertRules} onChange={setAlertRules} />
+                <WatchProfiles
+                  name={profileName}
+                  profiles={watchProfiles}
+                  onNameChange={setProfileName}
+                  onSave={saveWatchProfile}
+                  onLoad={loadWatchProfile}
+                />
+                <DiagnosticsMini
+                  total={selectedIds.length}
+                  fresh={Object.values(resultFreshnessById).filter((item) => item === "Fresh").length}
+                  cached={Object.values(resultFreshnessById).filter((item) => item === "Cached").length}
+                  stale={Object.values(resultFreshnessById).filter((item) => item === "Stale").length}
+                  failed={resultQueries.filter((query) => query.isError).length}
+                />
               </div>
+              <TightRaceSuggestions
+                suggestions={tightRaceSuggestions}
+                onAdd={(summary) => {
+                  trackEvent("tight_race_add", {
+                    constituency_id: summary.constituencyId,
+                    margin: summary.margin
+                  });
+                  setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
+                }}
+              />
               <SourceConfigPanel
                 sourceConfig={sourceConfigQuery.data}
                 onUpdated={() => {
@@ -752,6 +1051,9 @@ export function App() {
           {toast}
         </div>
       )}
+      {watchMode && (leaderChanges.length > 0 || winnerToasts.length > 0 || tightRaceToasts.length > 0) && (
+        <WatchModeSignal count={leaderChanges.length + winnerToasts.length + tightRaceToasts.length} />
+      )}
       {winnerToasts.length > 0 && (
         <div className="fixed bottom-24 right-4 z-[70] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-3 sm:bottom-4">
           {winnerToasts.map((winner) => (
@@ -763,6 +1065,22 @@ export function App() {
         <div className="fixed bottom-24 left-4 z-[70] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-3 sm:bottom-24">
           {lostToasts.map((lost) => (
             <LostToast key={lost.id} lost={lost} onClose={() => setLostToasts((current) => current.filter((item) => item.id !== lost.id))} />
+          ))}
+        </div>
+      )}
+      {tightRaceToasts.length > 0 && (
+        <div className="fixed bottom-48 left-4 z-[65] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:bottom-44">
+          {tightRaceToasts.map((race) => (
+            <TightRaceToast
+              key={race.id}
+              race={race}
+              onAdd={() => {
+                setSelectedIds((current) => current.includes(race.constituencyId) ? current : [...current, race.constituencyId]);
+                setTightRaceToasts((current) => current.filter((item) => item.id !== race.id));
+                trackEvent("tight_race_toast_add", { constituency_id: race.constituencyId, margin: race.margin });
+              }}
+              onClose={() => setTightRaceToasts((current) => current.filter((item) => item.id !== race.id))}
+            />
           ))}
         </div>
       )}
@@ -782,6 +1100,16 @@ export function App() {
           setLiveAudioExpanded(false);
         }}
       />
+      {!watchMode && (
+        <button
+          className="btn-press fixed bottom-44 right-4 z-50 rounded-full border border-zinc-200 bg-white p-3 text-zinc-700 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 md:hidden"
+          onClick={() => document.getElementById("controls-pane")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          title="Controls"
+          aria-label="Open controls"
+        >
+          <Settings className="h-5 w-5" />
+        </button>
+      )}
     </main>
   );
 }
@@ -804,6 +1132,93 @@ function DashboardMetrics({
       <Metric label="Last sync" value={lastSuccessAt ? new Date(lastSuccessAt).toLocaleTimeString() : "Waiting"} />
       <Metric label="Source" value={sourceHealth} />
     </>
+  );
+}
+
+function WatchModeSignal({ count }: { count: number }) {
+  return (
+    <div className="fixed right-0 top-1/2 z-[66] -translate-y-1/2 rounded-l-md border border-r-0 border-emerald-300 bg-emerald-600 px-1.5 py-3 text-[10px] font-black text-white shadow-lg dark:border-emerald-800" title={`${count} live alert${count === 1 ? "" : "s"}`}>
+      {count}
+    </div>
+  );
+}
+
+function QuickAddSearch({
+  constituencies,
+  candidates,
+  onAdd
+}: {
+  constituencies: ConstituencyOption[];
+  candidates: CandidateOption[];
+  onAdd: (constituencyId: string, candidateId?: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const searchTerm = query.trim().toLowerCase();
+  const matches = searchTerm.length < 1
+    ? []
+    : [
+        ...constituencies
+          .filter((constituency) => `${constituency.constituencyName} ${constituency.constituencyNumber}`.toLowerCase().includes(searchTerm))
+          .slice(0, 6)
+          .map((constituency) => ({
+            id: `seat-${constituency.constituencyId}`,
+            kind: "Seat",
+            label: constituency.constituencyName,
+            meta: `AC ${constituency.constituencyNumber}`,
+            constituencyId: constituency.constituencyId,
+            candidateId: undefined
+          })),
+        ...candidates
+          .filter((candidate) => `${candidate.candidateName} ${candidate.party} ${candidate.constituencyName} ${candidate.constituencyNumber}`.toLowerCase().includes(searchTerm))
+          .slice(0, 4)
+          .map((candidate) => ({
+            id: `candidate-${candidate.candidateId}`,
+            kind: "Candidate",
+            label: candidate.candidateName,
+            meta: `${shortPartyName(candidate.party)} - ${candidate.constituencyName}`,
+            constituencyId: candidate.constituencyId,
+            candidateId: candidate.candidateId
+          }))
+      ].slice(0, 8);
+
+  return (
+    <div className="relative hidden shrink-0 sm:block">
+      <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
+      <input
+        className="w-52 rounded-md border border-zinc-300 bg-white py-2 pl-8 pr-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || !matches[0]) return;
+          event.preventDefault();
+          onAdd(matches[0].constituencyId, matches[0].candidateId);
+          setQuery("");
+        }}
+        placeholder="Add seat/candidate"
+        aria-label="Quick add seat or candidate"
+      />
+      {matches.length > 0 && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-md border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
+          {matches.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              className="block w-full rounded-md px-2 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              onClick={() => {
+                onAdd(item.constituencyId, item.candidateId);
+                setQuery("");
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{item.kind}</span>
+                <span className="min-w-0 flex-1 truncate text-xs font-black text-zinc-950 dark:text-white">{item.label}</span>
+              </div>
+              <div className="mt-0.5 truncate pl-12 text-[10px] font-semibold text-zinc-500">{item.meta}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -863,6 +1278,51 @@ function LostToast({ lost, onClose }: { lost: LostNotification; onClose: () => v
       </div>
       <div className="mt-2 truncate text-[10px] font-semibold text-zinc-500">
         Winner: {lost.winnerName}
+      </div>
+    </div>
+  );
+}
+
+function TightRaceToast({
+  race,
+  onAdd,
+  onClose
+}: {
+  race: TightRaceNotification;
+  onAdd: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="animate-winner-toast rounded-md border border-amber-300 bg-white p-3 shadow-2xl dark:border-amber-800 dark:bg-zinc-950" role="status" aria-live="polite">
+      <div className="flex items-start gap-3">
+        <div className="relative shrink-0">
+          <CandidatePhoto candidateName={race.leadingCandidate} photoUrl={race.leadingCandidatePhotoUrl} size="tiny" tone="leading" />
+          <div className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            <AlertTriangle size={10} />
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-black uppercase tracking-wide text-amber-700 dark:text-amber-300">
+            {race.demo ? "Demo alert" : race.declared ? "Narrow result" : "Tight race"}
+          </div>
+          <div className="mt-1 truncate text-sm font-black text-zinc-950 dark:text-white" title={race.constituencyName}>
+            {race.constituencyName}
+          </div>
+          <div className="mt-1 truncate text-xs font-semibold text-zinc-600 dark:text-zinc-300" title={race.leadingCandidate}>
+            {race.leadingCandidate} leads by {formatNumber(race.margin)}
+          </div>
+        </div>
+        <button className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] font-black dark:border-zinc-700" onClick={onClose} aria-label="Dismiss tight race alert">
+          <X size={12} />
+        </button>
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold text-zinc-500">
+          {race.demo ? "Local demo only" : race.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "High tight race alert" : "Tap add to track it"}
+        </span>
+        <button className="rounded-md bg-zinc-950 px-3 py-1.5 text-[10px] font-black uppercase text-white dark:bg-white dark:text-zinc-950" onClick={onAdd}>
+          Add
+        </button>
       </div>
     </div>
   );
@@ -1060,6 +1520,123 @@ function CandidateWatchlist({
   );
 }
 
+function TightRaceSuggestions({
+  suggestions,
+  onAdd
+}: {
+  suggestions: ConstituencySummary[];
+  onAdd: (summary: ConstituencySummary) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="panel rounded-md p-4">
+      <button className="flex w-full items-center justify-between gap-2 text-left" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="font-bold text-zinc-950 dark:text-white">Tight races</span>
+        <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-black text-amber-900 dark:bg-amber-900 dark:text-amber-100">{suggestions.length}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          {suggestions.length === 0 && <div className="text-sm text-zinc-500">No untracked tight races right now.</div>}
+          {suggestions.map((summary) => (
+            <div key={summary.constituencyId} className="rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{summary.constituencyName}</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
+                    {summary.leadingCandidate || "Leader"} by {formatNumber(summary.margin)}
+                  </div>
+                </div>
+                <button
+                  className="shrink-0 rounded-md border border-amber-300 px-2 py-1 text-xs font-black text-amber-800 transition hover:-translate-y-0.5 hover:bg-amber-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97] focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/50"
+                  onClick={() => onAdd(summary)}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertRulesControl({ rules, onChange }: { rules: AlertRules; onChange: (value: AlertRules | ((current: AlertRules) => AlertRules)) => void }) {
+  const items: Array<[keyof AlertRules, string]> = [
+    ["leaderChange", "Leader"],
+    ["winnerDeclared", "Winner"],
+    ["highTightRace", "Tight"],
+    ["candidateWatch", "Watch"]
+  ];
+  return (
+    <div className="mt-3">
+      <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Wake me for</div>
+      <div className="mt-2 grid grid-cols-4 gap-1">
+        {items.map(([key, label]) => (
+          <button
+            key={key}
+            className={`rounded-md border px-1.5 py-1 text-[10px] font-black ${rules[key] ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" : "border-zinc-300 text-zinc-500 dark:border-zinc-700"}`}
+            onClick={() => onChange((current) => ({ ...current, [key]: !current[key] }))}
+            type="button"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WatchProfiles({
+  name,
+  profiles,
+  onNameChange,
+  onSave,
+  onLoad
+}: {
+  name: string;
+  profiles: WatchProfile[];
+  onNameChange: (name: string) => void;
+  onSave: () => void;
+  onLoad: (profile: WatchProfile) => void;
+}) {
+  return (
+    <div className="mt-3">
+      <div className="mb-1 text-[10px] font-black uppercase tracking-wide text-zinc-500">Save current view</div>
+      <div className="grid grid-cols-[1fr_auto] gap-2">
+        <input
+          className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-xs"
+          value={name}
+          onChange={(event) => onNameChange(event.target.value)}
+          placeholder="Watchlist name"
+          aria-label="Watchlist name"
+        />
+        <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onSave} type="button">
+          Save
+        </button>
+      </div>
+      {profiles.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {profiles.slice(0, 5).map((profile) => (
+            <button key={profile.name} className="btn-press rounded-md bg-zinc-100 px-2 py-1 text-[10px] font-bold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-200" onClick={() => onLoad(profile)} type="button">
+              {profile.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiagnosticsMini({ total, fresh, cached, stale, failed }: { total: number; fresh: number; cached: number; stale: number; failed: number }) {
+  return (
+    <div className="mt-3 rounded-md border border-zinc-200 px-2 py-1.5 text-[10px] font-bold text-zinc-500 dark:border-zinc-800" title="Fetched / cached / stale / failed cards">
+      Data {fresh}/{total} fresh · {cached} cached · {stale} stale · {failed} failed
+    </div>
+  );
+}
+
 function ConstituencySelector({
   options,
   selectedIds,
@@ -1211,6 +1788,7 @@ function SourceConfigPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState(() => sessionStorage.getItem("kerala-election:admin-password") ?? "");
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem("kerala-election:admin-password") === ADMIN_PASSWORD);
   const [baseUrl, setBaseUrl] = useState(sourceConfig?.baseUrl ?? "");
   const [constituencyListUrl, setConstituencyListUrl] = useState(sourceConfig?.constituencyListUrl ?? "");
   const [candidateDetailUrlTemplate, setCandidateDetailUrlTemplate] = useState(sourceConfig?.candidateDetailUrlTemplate ?? "");
@@ -1249,18 +1827,50 @@ function SourceConfigPanel({
       setCandidateDetailUrlTemplate("https://results.eci.gov.in/<KeralaElectionFolder>/candidateswise-S11{constituencyNumber}.htm");
     }
   };
+  const applyElectionDayMode = () => {
+    setRefreshIntervalSeconds("10");
+  };
 
   return (
     <div className="panel rounded-md p-4">
       <button className="flex w-full items-center justify-between text-left font-bold" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span><Settings className="mr-2 inline h-4 w-4" /> Source URLs</span>
+        <span><Settings className="mr-2 inline h-4 w-4" /> Admin settings</span>
         <Lock className="h-4 w-4 text-zinc-500" />
       </button>
       <p className="mt-2 text-xs leading-5 text-zinc-500">
-        Admin-only runtime settings. Detail templates must include {"{constituencyNumber}"}.
+        Locked controls for source URLs and refresh timing.
       </p>
       {open && (
         <div className="mt-4 space-y-3">
+          {!unlocked && (
+            <>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="admin-unlock-password">Admin password</label>
+              <input
+                id="admin-unlock-password"
+                type="password"
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                className="btn-press-dark w-full rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                onClick={() => {
+                  if (password !== ADMIN_PASSWORD) {
+                    sessionStorage.removeItem("kerala-election:admin-password");
+                    return;
+                  }
+                  sessionStorage.setItem("kerala-election:admin-password", password);
+                  setUnlocked(true);
+                }}
+                type="button"
+              >
+                Unlock admin settings
+              </button>
+              {password && password !== ADMIN_PASSWORD && <p className="text-sm text-red-600">Invalid admin password.</p>}
+            </>
+          )}
+          {unlocked && (
+            <>
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="base-url">Base URL</label>
           <input
             id="base-url"
@@ -1289,6 +1899,14 @@ function SourceConfigPanel({
           >
             Kerala 2026 preset
           </button>
+          <button
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+            onClick={applyElectionDayMode}
+            type="button"
+            title="Sets frontend refresh to 10 seconds. Save to apply."
+          >
+            Election day mode
+          </button>
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="refresh-seconds">Refresh seconds</label>
           <input
             id="refresh-seconds"
@@ -1310,7 +1928,7 @@ function SourceConfigPanel({
             onChange={(event) => setPassword(event.target.value)}
           />
           <button
-            className="w-full rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-zinc-950"
+            className="w-full rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             onClick={() => mutation.mutate()}
             disabled={mutation.isPending}
           >
@@ -1322,6 +1940,8 @@ function SourceConfigPanel({
             <p className="text-xs text-zinc-500">
               Last updated by {sourceConfig.updatedBy} at {new Date(sourceConfig.updatedAt).toLocaleString()}.
             </p>
+          )}
+            </>
           )}
         </div>
       )}
@@ -1338,9 +1958,14 @@ function PartySummaryDock({
   checkedAt?: number;
   traffic?: { watchingNow: number; totalViews: number };
 }) {
-  if (!parties.length && !traffic) return null;
+  const previousTotals = useRef<Record<string, number>>({});
   const visibleParties = parties.slice(0, 8);
   const totalSeats = parties.reduce((sum, party) => sum + party.total, 0);
+  const deltas = Object.fromEntries(parties.map((party) => [party.party, party.total - (previousTotals.current[party.party] ?? party.total)]));
+  useEffect(() => {
+    previousTotals.current = Object.fromEntries(parties.map((party) => [party.party, party.total]));
+  }, [parties]);
+  if (!parties.length && !traffic) return null;
 
   return (
     <div key={checkedAt ?? 0} className="animate-summary-refresh fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white/95 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
@@ -1363,6 +1988,7 @@ function PartySummaryDock({
               <div className="mt-1 flex gap-2 text-[10px] font-bold text-white/90">
                 <span>Won {party.won}</span>
                 <span>Lead {party.leading}</span>
+                {deltas[party.party] !== 0 && <span>{deltas[party.party] > 0 ? "+" : ""}{deltas[party.party]}</span>}
               </div>
             </div>
           </div>
@@ -1388,8 +2014,10 @@ function ResultCard({
   result,
   previous,
   checkedAt,
+  freshness,
   isPinned,
   onTogglePin,
+  onRemove,
   changedAt,
   leaderChanged,
   history,
@@ -1399,8 +2027,10 @@ function ResultCard({
   result: ConstituencyResult;
   previous?: ConstituencyResult;
   checkedAt?: number;
+  freshness: "Fresh" | "Cached" | "Stale";
   isPinned: boolean;
   onTogglePin: () => void;
+  onRemove: () => void;
   changedAt?: number;
   leaderChanged: boolean;
   history: LeaderHistoryEntry[];
@@ -1418,10 +2048,12 @@ function ResultCard({
   const runnerParty = shortPartyName(result.trailingParty || runnerUp?.party || "-");
   const roundProgress = parseRoundProgress(result.roundStatus || result.statusText);
   const countingPercent = roundProgress ? Math.min(100, Math.round((roundProgress.current / roundProgress.total) * 100)) : undefined;
+  const sourceDelayMinutes = sourceDelayInMinutes(result.lastUpdated, checkedAt);
   const statusForDisplay = result.statusText || result.roundStatus;
   const declared = isDeclaredWinner(result.statusText || result.roundStatus);
   const closeFight = result.margin <= 5000;
   const veryCloseFight = result.margin <= 1000;
+  const confidence = raceConfidenceLabel(result, countingPercent);
 
   return (
     <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative overflow-visible rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
@@ -1431,6 +2063,7 @@ function ResultCard({
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-bold text-zinc-950 dark:text-white">{result.constituencyName}</h2>
             <StatusIcon status={statusForDisplay} />
+            {!declared && <span className={`badge ${confidenceClass(confidence)}`}>{confidence}</span>}
             {leaderChanged && <span className="badge bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100">Changed</span>}
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -1450,6 +2083,14 @@ function ResultCard({
               aria-label={isPinned ? "Unpin constituency" : "Pin constituency"}
             >
               <Star className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
+            </button>
+            <button
+              className="rounded-md p-1 text-zinc-400 hover:text-rose-600 dark:hover:text-rose-300"
+              onClick={onRemove}
+              title="Remove from selected"
+              aria-label={`Remove ${result.constituencyName} from selected constituencies`}
+            >
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -1504,10 +2145,12 @@ function ResultCard({
             ))}
           </div>
           <div className="text-right text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-            <div>Last checked {checkedAt ? new Date(checkedAt).toLocaleTimeString() : "-"}</div>
+            <div>{freshness} - Last checked {checkedAt ? new Date(checkedAt).toLocaleTimeString() : "-"}</div>
+            {sourceDelayMinutes >= 5 && <div className="text-amber-700 dark:text-amber-300">ECI data {sourceDelayMinutes}m old</div>}
             {changedAt && <div>Changed {new Date(changedAt).toLocaleTimeString()}</div>}
           </div>
         </div>
+        <MarginSparkline history={history} currentMargin={result.margin} />
       </div>
       {roundProgress && !declared && (
         <div className="relative h-4 overflow-hidden rounded-b-md bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
@@ -1537,6 +2180,29 @@ function CandidateMiniTooltip({
         <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">{shortPartyName(candidate.party)}</div>
         <div className="mt-1 text-xs font-black text-zinc-950 dark:text-white">{formatNumber(candidate.totalVotes)} votes</div>
       </div>
+    </div>
+  );
+}
+
+function MarginSparkline({ history, currentMargin }: { history: LeaderHistoryEntry[]; currentMargin: number }) {
+  const values = [...history].reverse().map((entry) => entry.margin).concat(currentMargin).slice(-6);
+  if (values.length < 2) return null;
+  const max = Math.max(...values, 1);
+  const points = values
+    .map((value, index) => {
+      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
+      const y = 18 - (value / max) * 16;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const rising = values[values.length - 1] >= values[0];
+
+  return (
+    <div className="mt-2 h-5" title="Margin trend">
+      <svg viewBox="0 0 100 20" className="h-full w-full text-zinc-300 dark:text-zinc-800" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" opacity="0.45" />
+        <polyline points={points} fill="none" stroke={rising ? "#047857" : "#be123c"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </div>
   );
 }
@@ -1765,6 +2431,13 @@ function latestDataUpdatedAt(values: number[]) {
   return Math.max(0, ...values.filter(Boolean));
 }
 
+function sourceDelayInMinutes(lastUpdated: string, checkedAt?: number) {
+  if (!lastUpdated || !checkedAt) return 0;
+  const parsed = Date.parse(lastUpdated);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor((checkedAt - parsed) / 60000));
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-IN").format(value || 0);
 }
@@ -1774,6 +2447,22 @@ function formatDelta(value: number) {
   return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
 }
 
+function raceConfidenceLabel(result: ConstituencyResult, countingPercent?: number) {
+  if (isDeclaredWinner(result.statusText || result.roundStatus)) return "Declared";
+  if ((countingPercent ?? 0) < 25) return "Too early";
+  if (result.margin <= HIGH_TIGHT_MARGIN_LIMIT) return "Tight";
+  if (result.margin <= TIGHT_MARGIN_LIMIT) return "Competitive";
+  if ((countingPercent ?? 0) >= 75 && result.margin >= 10000) return "Likely safe";
+  return "Leaning";
+}
+
+function confidenceClass(label: string) {
+  if (label === "Declared") return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100";
+  if (label === "Tight") return "bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100";
+  if (label === "Competitive") return "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100";
+  return "bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
+}
+
 function parseRoundProgress(value: string) {
   const match = value.match(/(\d+)\s*(?:\/|of)\s*(\d+)/i);
   if (!match) return null;
@@ -1781,6 +2470,30 @@ function parseRoundProgress(value: string) {
   const total = Number(match[2]);
   if (!current || !total || current > total) return null;
   return { current, total };
+}
+
+function tightRaceProgressPercent(summary: ConstituencySummary) {
+  const progress = parseRoundProgress(summary.roundStatus || summary.statusText || "");
+  if (!progress) return null;
+  return Math.min(100, Math.round((progress.current / progress.total) * 100));
+}
+
+function isNotificationWorthyTightRace(summary: ConstituencySummary) {
+  if (summary.margin <= 0 || summary.margin > TIGHT_MARGIN_LIMIT) return false;
+  if (isDeclaredWinner(summary.statusText || summary.roundStatus)) return true;
+
+  const percent = tightRaceProgressPercent(summary);
+  if (percent === null) return true;
+  return percent >= TIGHT_RACE_NOTIFY_MIN_PROGRESS;
+}
+
+function tightRaceNotificationKey(summary: ConstituencySummary, demo: boolean) {
+  const declared = isDeclaredWinner(summary.statusText || summary.roundStatus);
+  const percent = tightRaceProgressPercent(summary);
+  const stage = declared ? "declared" : percent === null ? "unknown" : `p${Math.floor(percent / 25) * 25}`;
+  const severity = summary.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "high" : "tight";
+  const leader = normalizeKeyPart(summary.leadingCandidate || "leader");
+  return `${demo ? "demo" : "live"}:${summary.constituencyId}:${stage}:${severity}:${leader}`;
 }
 
 function isDeclaredWinner(value: string) {
@@ -1814,4 +2527,12 @@ function shortPartyName(value: string) {
     "None of the Above": "NOTA"
   };
   return known[value] ?? value;
+}
+
+function normalizeKeyPart(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function normalizeCandidateName(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
 }

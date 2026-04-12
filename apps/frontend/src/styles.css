@@ -34,9 +34,53 @@ select {
   font: inherit;
 }
 
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    filter 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+button:not(:disabled):hover {
+  filter: brightness(0.98);
+}
+
+.dark button:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+button:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.34);
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 @layer components {
   .panel {
     @apply border border-zinc-200 bg-white shadow-soft dark:border-zinc-800 dark:bg-zinc-950;
+  }
+
+  .btn-press {
+    @apply transition hover:-translate-y-0.5 hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-800 hover:shadow-sm active:translate-y-0 active:scale-[0.97] focus:outline-none focus:ring-2 focus:ring-emerald-500/40 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-200;
+  }
+
+  .btn-press-dark {
+    @apply transition hover:-translate-y-0.5 hover:bg-zinc-800 hover:shadow-sm active:translate-y-0 active:scale-[0.97] focus:outline-none focus:ring-2 focus:ring-emerald-500/40 dark:hover:bg-zinc-800;
   }
 
   .badge {
@@ -73,6 +117,21 @@ select {
   animation: close-watch-pulse 2.8s ease-in-out infinite;
 }
 
+.dark .animate-close-watch {
+  animation-name: close-watch-pulse-dark;
+}
+
+@keyframes close-watch-pulse-dark {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 18px 40px rgba(0, 0, 0, 0.34);
+    background-color: rgb(9, 9, 11);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.42), 0 0 24px rgba(245, 158, 11, 0.34), 0 18px 40px rgba(0, 0, 0, 0.34);
+    background-color: rgb(9, 9, 11);
+  }
+}
+
 @keyframes close-fight-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(225, 29, 72, 0), 0 18px 40px rgba(15, 23, 42, 0.08);
@@ -86,6 +145,21 @@ select {
 
 .animate-close-fight {
   animation: close-fight-pulse 2.1s ease-in-out infinite;
+}
+
+.dark .animate-close-fight {
+  animation-name: close-fight-pulse-dark;
+}
+
+@keyframes close-fight-pulse-dark {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0), 0 18px 40px rgba(0, 0, 0, 0.34);
+    background-color: rgb(9, 9, 11);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(225, 29, 72, 0.46), 0 0 28px rgba(225, 29, 72, 0.38), 0 18px 40px rgba(0, 0, 0, 0.34);
+    background-color: rgb(9, 9, 11);
+  }
 }
 
 @keyframes summary-refresh-pulse {

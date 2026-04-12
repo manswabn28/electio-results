@@ -5,6 +5,7 @@ import type {
   ConstituencyResult,
   ConstituencySummary,
   PartySummaryResponse,
+  ResultsDetailsResponse,
   ResultsSummaryResponse
 } from "@kerala-election/shared";
 import { TtlCache } from "../cache.js";
@@ -23,6 +24,7 @@ import { buildCandidateDetailUrl, getSourceConfig, resolveConfiguredUrl } from "
 
 const cache = new TtlCache<unknown>(config.CACHE_TTL_SECONDS * 1000);
 const backgroundRefreshes = new Map<string, Promise<unknown>>();
+const foregroundRefreshes = new Map<string, Promise<unknown>>();
 let candidateIndex:
   | {
       sourceKey: string;
@@ -62,7 +64,7 @@ async function getStateSummaries(): Promise<{ sourceUrl?: string; summaries: Con
     return stale;
   }
 
-  return refreshStateSummaries(cacheKey);
+  return refreshOnce(cacheKey, () => refreshStateSummaries(cacheKey));
 }
 
 async function refreshStateSummaries(cacheKey: string): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
@@ -213,7 +215,34 @@ export async function getConstituencyResult(constituencyId: string): Promise<Con
     return stale;
   }
 
-  return refreshConstituencyResult(constituencyId, cacheKey);
+  return refreshOnce(cacheKey, () => refreshConstituencyResult(constituencyId, cacheKey));
+}
+
+export async function getConstituencyResults(ids: string[]): Promise<ResultsDetailsResponse> {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  const results: ConstituencyResult[] = [];
+  const errors: { constituencyId?: string; message: string; code?: string }[] = [];
+
+  await Promise.all(
+    uniqueIds.map(async (id) => {
+      try {
+        results.push(await getConstituencyResult(id));
+      } catch (error) {
+        errors.push({
+          constituencyId: id,
+          message: error instanceof Error ? error.message : "Failed to load constituency detail.",
+          code: typeof error === "object" && error && "code" in error ? String(error.code) : "RESULT_DETAIL_FAILED"
+        });
+      }
+    })
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sourceConfigured: true,
+    results: sortByRequestedOrder(results, uniqueIds),
+    errors
+  };
 }
 
 async function refreshConstituencyResult(constituencyId: string, cacheKey: string): Promise<ConstituencyResult> {
@@ -257,7 +286,7 @@ export async function getPartySummary(): Promise<PartySummaryResponse> {
     return stale;
   }
 
-  return refreshPartySummary(cacheKey);
+  return refreshOnce(cacheKey, () => refreshPartySummary(cacheKey));
 }
 
 async function refreshPartySummary(cacheKey: string): Promise<PartySummaryResponse> {
@@ -289,6 +318,7 @@ async function refreshPartySummary(cacheKey: string): Promise<PartySummaryRespon
 export function clearElectionCache(): void {
   cache.clear();
   backgroundRefreshes.clear();
+  foregroundRefreshes.clear();
   candidateIndex = undefined;
   candidateIndexPromise = undefined;
 }
@@ -303,6 +333,21 @@ function refreshInBackground<T>(key: string, task: () => Promise<T>): void {
       backgroundRefreshes.delete(key);
     });
   backgroundRefreshes.set(key, promise);
+}
+
+function refreshOnce<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const running = foregroundRefreshes.get(key) as Promise<T> | undefined;
+  if (running) return running;
+  const promise = task().finally(() => {
+    foregroundRefreshes.delete(key);
+  });
+  foregroundRefreshes.set(key, promise);
+  return promise;
+}
+
+function sortByRequestedOrder(results: ConstituencyResult[], ids: string[]): ConstituencyResult[] {
+  const order = new Map(ids.map((id, index) => [normalizeComparable(id), index]));
+  return [...results].sort((a, b) => (order.get(normalizeComparable(a.constituencyId)) ?? 0) - (order.get(normalizeComparable(b.constituencyId)) ?? 0));
 }
 
 function filterRequested(summaries: ConstituencySummary[], ids: string[]): ConstituencySummary[] {

@@ -2,6 +2,7 @@ import type {
   CandidatesResponse,
   ConstituenciesResponse,
   ConstituencyResult,
+  ResultsDetailsResponse,
   PartySummaryResponse,
   PublicSourceConfig,
   ResultEnvelope,
@@ -49,6 +50,11 @@ export function fetchSummary(ids: string[]) {
 export async function fetchResult(id: string): Promise<ConstituencyResult> {
   const envelope = await request<ResultEnvelope<ConstituencyResult>>(apiUrl(`/api/results/${encodeURIComponent(id)}`));
   return envelope.data;
+}
+
+export function fetchResults(ids: string[]) {
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  return request<ResultsDetailsResponse>(apiUrl(`/api/results/details?${params}`));
 }
 
 export function fetchSourceConfig() {

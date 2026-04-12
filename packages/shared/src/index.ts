@@ -66,6 +66,13 @@ export type ResultsSummaryResponse = {
   errors: ApiError[];
 };
 
+export type ResultsDetailsResponse = {
+  generatedAt: string;
+  sourceConfigured: boolean;
+  results: ConstituencyResult[];
+  errors: ApiError[];
+};
+
 export type ConstituenciesResponse = {
   generatedAt: string;
   sourceConfigured: boolean;
