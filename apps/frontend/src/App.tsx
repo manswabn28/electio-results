@@ -767,11 +767,11 @@ export function App() {
   return (
     <main className="min-h-screen">
       {!watchMode && <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-4 px-4 py-3 sm:gap-6 sm:px-6 sm:py-5 lg:px-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Official ECI Source</p>
-              <h1 className="mt-2 text-3xl font-bold text-zinc-950 dark:text-white">Kerala Assembly Election 2026 Live Tracker</h1>
+              <p className="hidden text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 sm:block">Official ECI Source</p>
+              <h1 className="text-xl font-bold text-zinc-950 dark:text-white sm:mt-2 sm:text-3xl">Kerala Assembly Election 2026 Live Tracker</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">
                 Track only the constituencies you care about, refreshed every {sourceConfigQuery.data?.refreshIntervalSeconds ?? 30} seconds from configured ECI result pages.
               </p>
@@ -1100,16 +1100,6 @@ export function App() {
           setLiveAudioExpanded(false);
         }}
       />
-      {!watchMode && (
-        <button
-          className="btn-press fixed bottom-44 right-4 z-50 rounded-full border border-zinc-200 bg-white p-3 text-zinc-700 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 md:hidden"
-          onClick={() => document.getElementById("controls-pane")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-          title="Controls"
-          aria-label="Open controls"
-        >
-          <Settings className="h-5 w-5" />
-        </button>
-      )}
     </main>
   );
 }
