@@ -61,6 +61,8 @@ export function App() {
   const [watchedCandidateIds, setWatchedCandidateIds] = useLocalStorageState<string[]>("kerala-election:watched-candidates", []);
   const [lastChangedAt, setLastChangedAt] = useLocalStorageState<Record<string, number>>("kerala-election:last-changed-at", {});
   const [cachedResults, setCachedResults] = useLocalStorageState<Record<string, ConstituencyResult>>(CACHED_RESULTS_KEY, {});
+  const [cachedConstituencies, setCachedConstituencies] = useLocalStorageState<ConstituencyOption[]>("kerala-election:cached-constituencies", []);
+  const [cachedCandidates, setCachedCandidates] = useLocalStorageState<CandidateOption[]>("kerala-election:cached-candidates", []);
   const [lastCheckedById, setLastCheckedById] = useLocalStorageState<Record<string, number>>("kerala-election:last-checked-by-id", {});
   const [leaderHistory, setLeaderHistory] = useLocalStorageState<Record<string, LeaderHistoryEntry[]>>("kerala-election:leader-history", {});
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
@@ -198,6 +200,23 @@ export function App() {
     queryFn: fetchSourceConfig
   });
 
+  useEffect(() => {
+    const constituencies = constituenciesQuery.data?.constituencies;
+    if (constituencies?.length) setCachedConstituencies(constituencies);
+  }, [constituenciesQuery.data?.constituencies, setCachedConstituencies]);
+
+  useEffect(() => {
+    const candidates = candidatesQuery.data?.candidates;
+    if (candidates?.length) setCachedCandidates(candidates);
+  }, [candidatesQuery.data?.candidates, setCachedCandidates]);
+
+  const constituencyOptions = constituenciesQuery.data?.constituencies?.length
+    ? constituenciesQuery.data.constituencies
+    : cachedConstituencies;
+  const candidateOptions = candidatesQuery.data?.candidates?.length
+    ? candidatesQuery.data.candidates
+    : cachedCandidates;
+
   const trafficQuery = useQuery({
     queryKey: ["traffic", viewerId],
     queryFn: () => sendTrafficHeartbeat(viewerId),
@@ -214,15 +233,15 @@ export function App() {
   }, [constituenciesQuery.data, hasBootstrappedFavorites, setSelectedIds]);
 
   const selectedOptions = useMemo(() => {
-    const options = constituenciesQuery.data?.constituencies ?? [];
+    const options = constituencyOptions;
     const byId = new Map(options.map((option) => [option.constituencyId, option]));
     return selectedIds.map((id) => byId.get(id)).filter(Boolean) as ConstituencyOption[];
-  }, [constituenciesQuery.data?.constituencies, selectedIds]);
+  }, [constituencyOptions, selectedIds]);
 
   const watchedCandidates = useMemo(() => {
-    const byId = new Map((candidatesQuery.data?.candidates ?? []).map((candidate) => [candidate.candidateId, candidate]));
+    const byId = new Map(candidateOptions.map((candidate) => [candidate.candidateId, candidate]));
     return watchedCandidateIds.map((id) => byId.get(id)).filter(Boolean) as CandidateOption[];
-  }, [candidatesQuery.data?.candidates, watchedCandidateIds]);
+  }, [candidateOptions, watchedCandidateIds]);
 
   const summaryQuery = useQuery({
     queryKey: ["summary", selectedIds],
@@ -233,9 +252,9 @@ export function App() {
   const refreshMs = Math.max(5, sourceConfigQuery.data?.refreshIntervalSeconds ?? 30) * 1000;
 
   const allSummaryQuery = useQuery({
-    queryKey: ["summary", "all-winner-watch", constituenciesQuery.data?.constituencies.map((item) => item.constituencyId).join(",") ?? ""],
-    queryFn: () => fetchSummary(constituenciesQuery.data?.constituencies.map((item) => item.constituencyId) ?? []),
-    enabled: Boolean(constituenciesQuery.data?.constituencies.length),
+    queryKey: ["summary", "all-winner-watch", constituencyOptions.map((item) => item.constituencyId).join(",")],
+    queryFn: () => fetchSummary(constituencyOptions.map((item) => item.constituencyId)),
+    enabled: Boolean(constituencyOptions.length),
     refetchInterval: refreshMs
   });
 
@@ -576,22 +595,22 @@ export function App() {
         <div className={watchMode ? "block" : `grid gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
           {!watchMode && <aside className="order-2 space-y-4 lg:order-none lg:col-start-1 lg:row-start-1">
             <ConstituencySelector
-              options={constituenciesQuery.data?.constituencies ?? []}
+              options={constituencyOptions}
               selectedIds={selectedIds}
               onChange={(ids) => {
                 trackEvent("constituency_selection_change", { selected_count: ids.length });
                 setSelectedIds(ids);
                 if (!ids.length) setWatchedCandidateIds([]);
               }}
-              isLoading={constituenciesQuery.isLoading}
+              isLoading={!constituencyOptions.length && constituenciesQuery.isLoading}
               collapsed={sidebarCollapsed}
               onCollapsedChange={setSidebarCollapsed}
             />
             {!sidebarCollapsed && (
               <CandidateWatchlist
-                candidates={candidatesQuery.data?.candidates ?? []}
+                candidates={candidateOptions}
                 watchedCandidates={watchedCandidates}
-                isLoading={candidatesQuery.isLoading || candidatesQuery.isFetching}
+                isLoading={!candidateOptions.length && (candidatesQuery.isLoading || candidatesQuery.isFetching)}
                 onSelect={(candidate) => {
                   trackEvent("candidate_watch_add", {
                     candidate_id: candidate.candidateId,
@@ -706,6 +725,9 @@ export function App() {
               <SourceConfigPanel
                 sourceConfig={sourceConfigQuery.data}
                 onUpdated={() => {
+                  setCachedConstituencies([]);
+                  setCachedCandidates([]);
+                  setWatchedCandidateIds([]);
                   void queryClient.invalidateQueries({ queryKey: ["source-config"] });
                   void queryClient.invalidateQueries({ queryKey: ["constituencies"] });
                   void queryClient.invalidateQueries({ queryKey: ["summary"] });
