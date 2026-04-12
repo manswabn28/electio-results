@@ -1008,20 +1008,6 @@ function CandidateWatchlist({
           onChange={(event) => setSearch(event.target.value)}
         />
       </div>
-      {watchedCandidates.length > 0 && (
-        <div className="mt-3 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
-          {watchedCandidates.map((candidate) => (
-            <button
-              key={candidate.candidateId}
-              className="rounded-md bg-sky-100 px-2 py-1 text-xs font-bold text-sky-900 dark:bg-sky-900 dark:text-sky-100"
-              onClick={() => onRemove(candidate.candidateId)}
-              title={`Remove ${candidate.candidateName}`}
-            >
-              {candidate.candidateName} ×
-            </button>
-          ))}
-        </div>
-      )}
       {search.trim().length >= 2 && (
         <div className="mt-2 max-h-56 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
           {isLoading && <div className="p-3 text-sm text-zinc-500">Building candidate list once...</div>}
@@ -1035,10 +1021,31 @@ function CandidateWatchlist({
                 setSearch("");
               }}
             >
-              <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
-              <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
-                {shortPartyName(candidate.party)} · {candidate.constituencyName} ({candidate.constituencyNumber})
+              <div className="flex items-center gap-2">
+                <CandidatePhoto candidateName={candidate.candidateName} photoUrl={candidate.photoUrl} size="mini" />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
+                    {shortPartyName(candidate.party)} · {candidate.constituencyName} ({candidate.constituencyNumber})
+                  </div>
+                </div>
               </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {watchedCandidates.length > 0 && (
+        <div className="mt-3 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+          {watchedCandidates.map((candidate) => (
+            <button
+              key={candidate.candidateId}
+              className="inline-flex items-center gap-1.5 rounded-md bg-sky-100 px-2 py-1 text-xs font-bold text-sky-900 dark:bg-sky-900 dark:text-sky-100"
+              onClick={() => onRemove(candidate.candidateId)}
+              title={`Remove ${candidate.candidateName}`}
+            >
+              <CandidatePhoto candidateName={candidate.candidateName} photoUrl={candidate.photoUrl} size="mini" />
+              <span className="max-w-28 truncate">{candidate.candidateName}</span>
+              <span>×</span>
             </button>
           ))}
         </div>
