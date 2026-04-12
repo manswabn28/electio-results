@@ -620,9 +620,10 @@ export function App() {
                   setWatchedCandidateIds((current) => current.includes(candidate.candidateId) ? current : [...current, candidate.candidateId]);
                   setSelectedIds((current) => current.includes(candidate.constituencyId) ? current : [...current, candidate.constituencyId]);
                 }}
-                onRemove={(candidateId) => {
-                  trackEvent("candidate_watch_remove", { candidate_id: candidateId });
-                  setWatchedCandidateIds((current) => current.filter((id) => id !== candidateId));
+                onRemove={(candidate) => {
+                  trackEvent("candidate_watch_remove", { candidate_id: candidate.candidateId, constituency_id: candidate.constituencyId });
+                  setWatchedCandidateIds((current) => current.filter((id) => id !== candidate.candidateId));
+                  setSelectedIds((current) => current.filter((id) => id !== candidate.constituencyId));
                 }}
               />
             )}
@@ -980,7 +981,7 @@ function CandidateWatchlist({
   watchedCandidates: CandidateOption[];
   isLoading: boolean;
   onSelect: (candidate: CandidateOption) => void;
-  onRemove: (candidateId: string) => void;
+  onRemove: (candidate: CandidateOption) => void;
 }) {
   const [search, setSearch] = useState("");
   const watchedIds = new Set(watchedCandidates.map((candidate) => candidate.candidateId));
@@ -1040,7 +1041,7 @@ function CandidateWatchlist({
             <button
               key={candidate.candidateId}
               className="inline-flex items-center gap-1.5 rounded-md bg-sky-100 px-2 py-1 text-xs font-bold text-sky-900 dark:bg-sky-900 dark:text-sky-100"
-              onClick={() => onRemove(candidate.candidateId)}
+              onClick={() => onRemove(candidate)}
               title={`Remove ${candidate.candidateName}`}
             >
               <CandidatePhoto candidateName={candidate.candidateName} photoUrl={candidate.photoUrl} size="mini" />
