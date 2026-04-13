@@ -765,18 +765,18 @@ export function App() {
   };
 
   return (
-    <main className="min-h-screen">
+    <main className="min-h-screen max-w-full overflow-x-hidden">
       {!watchMode && <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-4 px-4 py-3 sm:gap-6 sm:px-6 sm:py-5 lg:px-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
+          <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
               <p className="hidden text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 sm:block">Official ECI Source</p>
               <h1 className="text-xl font-bold text-zinc-950 dark:text-white sm:mt-2 sm:text-3xl">Kerala Assembly Election 2026 Live Tracker</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">
                 Track only the constituencies you care about, refreshed every {sourceConfigQuery.data?.refreshIntervalSeconds ?? 30} seconds from configured ECI result pages.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 overflow-visible">
+            <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible">
               <QuickAddSearch
                 constituencies={constituencyOptions}
                 candidates={candidateOptions}
@@ -786,16 +786,16 @@ export function App() {
                   if (candidateId) setWatchedCandidateIds((current) => current.includes(candidateId) ? current : [...current, candidateId]);
                 }}
               />
-              <button className="btn-press rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => setDarkMode(!darkMode)}>
+              <button className="btn-press inline-flex w-full items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700 sm:w-auto" onClick={() => setDarkMode(!darkMode)}>
                 {darkMode ? <Sun className="mr-2 inline h-4 w-4" /> : <Moon className="mr-2 inline h-4 w-4" />}
                 {darkMode ? "Light" : "Dark"}
               </button>
-              <button className="btn-press rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => setSoundEnabled(!soundEnabled)}>
+              <button className="btn-press inline-flex w-full items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700 sm:w-auto" onClick={() => setSoundEnabled(!soundEnabled)}>
                 <Bell className="mr-2 inline h-4 w-4" />
                 Alerts {soundEnabled ? "On" : "Off"}
               </button>
               <button
-                className="btn-press-dark rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                className="btn-press-dark inline-flex w-full items-center justify-center rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 dark:border dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
                 onClick={manualRefresh}
                 disabled={isFetching}
               >
@@ -803,7 +803,7 @@ export function App() {
                 Refresh Now
               </button>
               <button
-                className="btn-press shrink-0 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
+                className="btn-press inline-flex w-full shrink-0 items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700 sm:w-auto"
                 onClick={enterWatchMode}
                 title="Watch mode"
                 aria-label="Watch mode"
@@ -819,7 +819,7 @@ export function App() {
         </div>
       </section>}
 
-      <section className={`${watchMode ? "mx-auto w-full max-w-[2400px] px-4 py-4 sm:px-6 lg:px-8" : "mx-auto w-full max-w-[2200px] px-4 py-6 sm:px-6 lg:px-8"}`}>
+      <section className={`${watchMode ? "mx-auto w-full max-w-[2400px] overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8" : "mx-auto w-full max-w-[2200px] overflow-x-hidden px-4 py-6 sm:px-6 lg:px-8"}`}>
         {watchMode && (
           <button
             className="fixed right-4 top-4 z-50 rounded-full border border-zinc-200 bg-white p-3 text-zinc-700 shadow-lg hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
@@ -853,7 +853,7 @@ export function App() {
           </div>
         )}
 
-        <div className={watchMode ? "block" : `grid gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
+        <div className={watchMode ? "block min-w-0" : `grid min-w-0 gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
           {!watchMode && <aside className="order-2 space-y-4 lg:order-none lg:col-start-1 lg:row-start-1">
             <ConstituencySelector
               options={constituencyOptions}
@@ -891,8 +891,8 @@ export function App() {
           </aside>}
 
           <div
-            className={watchMode ? "grid content-start gap-4" : "order-1 grid content-start gap-4 lg:col-start-2 lg:row-span-2 lg:row-start-1"}
-            style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${watchMode ? "360px" : "320px"}), 1fr))` }}
+            className={watchMode ? "grid min-w-0 content-start gap-4" : "order-1 grid min-w-0 content-start gap-4 lg:col-start-2 lg:row-span-2 lg:row-start-1"}
+            style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${watchMode ? "360px" : "300px"}), 1fr))` }}
           >
             {selectedIds.length === 0 && <EmptyState />}
             {selectedOptions.map((option, index) => {
@@ -2181,7 +2181,7 @@ function ResultCard({
   const confidence = raceConfidenceLabel(result, countingPercent);
 
   return (
-    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative overflow-visible rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
+    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative w-full min-w-0 max-w-full overflow-hidden rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
       <div className="border-b border-zinc-200 dark:border-zinc-800">
         <div className="p-4">
         <div className="flex items-start justify-between gap-2">
@@ -2230,7 +2230,7 @@ function ResultCard({
             placeholder="Private note for this seat"
           />
         )}
-        <div className="mt-4 grid grid-cols-[72px_1fr_auto] items-center gap-3">
+        <div className="mt-4 grid min-w-0 grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:gap-3">
           <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" crowned={declared} />
           <div className="min-w-0">
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
@@ -2240,7 +2240,7 @@ function ResultCard({
             <div className="mt-1 truncate text-base font-black text-zinc-950 dark:text-white" title={leaderName}>{leaderName}</div>
             <div className="truncate text-sm font-semibold text-zinc-600 dark:text-zinc-300" title={leaderParty}>{leaderParty}</div>
           </div>
-          <div className="shrink-0 text-right">
+          <div className="min-w-[72px] shrink-0 text-right">
             <div className={`text-xs font-semibold uppercase tracking-wide ${closeFight ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}`}>{veryCloseFight ? "Alert lead" : closeFight ? "Tight lead" : "Lead"}</div>
             <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">{formatNumber(result.margin)}</div>
             <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Votes</div>

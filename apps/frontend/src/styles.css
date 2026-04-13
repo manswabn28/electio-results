@@ -10,12 +10,24 @@
   color-scheme: dark;
 }
 
+html {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   min-width: 320px;
+  max-width: 100vw;
+  overflow-x: hidden;
   background: #f7f7f5;
   color: #18181b;
   padding-bottom: 86px;
+}
+
+#root {
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 body.hide-cursor,
