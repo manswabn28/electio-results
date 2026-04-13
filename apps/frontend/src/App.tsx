@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
 import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, PublicSourceConfig, SortMode } from "@kerala-election/shared";
 import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSummary, runSourceDiscovery, sendTrafficHeartbeat, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
@@ -771,12 +771,23 @@ export function App() {
           <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
               <p className="hidden text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 sm:block">Official ECI Source</p>
-              <h1 className="text-xl font-bold text-zinc-950 dark:text-white sm:mt-2 sm:text-3xl">Kerala Assembly Election 2026 Live Tracker</h1>
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <h1 className="brand-title min-w-0 text-xl text-zinc-950 dark:text-white sm:mt-2 sm:text-3xl">Kerala Assembly Election 2026 Live Tracker</h1>
+                <button
+                  className="btn-press inline-flex shrink-0 items-center justify-center rounded-md border border-zinc-300 p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900 sm:hidden"
+                  onClick={enterWatchMode}
+                  title="Watch mode"
+                  aria-label="Watch mode"
+                  type="button"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </button>
+              </div>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-                Track only the constituencies you care about, refreshed every {sourceConfigQuery.data?.refreshIntervalSeconds ?? 30} seconds from configured ECI result pages.
+                Skip the noise, track what matters. Curated election tracking, tailored to you.
               </p>
             </div>
-            <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible">
+            <div className="grid w-full min-w-0 grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible">
               <QuickAddSearch
                 constituencies={constituencyOptions}
                 candidates={candidateOptions}
@@ -800,14 +811,17 @@ export function App() {
                 disabled={isFetching}
               >
                 <RefreshCw className={`mr-2 inline h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-                Refresh Now
+                <span className="sm:hidden">Refresh</span>
+                <span className="hidden sm:inline">Refresh Now</span>
               </button>
               <button
-                className="btn-press inline-flex w-full shrink-0 items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700 sm:w-auto"
+                className="btn-press hidden w-full shrink-0 items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-[0px] font-semibold dark:border-zinc-700 sm:inline-flex sm:w-auto"
                 onClick={enterWatchMode}
                 title="Watch mode"
                 aria-label="Watch mode"
+                type="button"
               >
+                <Maximize2 className="h-4 w-4" />
                 ⛶
               </button>
             </div>
@@ -1172,7 +1186,7 @@ function QuickAddSearch({
       ].slice(0, 8);
 
   return (
-    <div className="relative w-full sm:w-auto sm:shrink-0">
+    <div className="relative col-span-3 w-full sm:col-span-1 sm:w-auto sm:shrink-0">
       <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
       <input
         className="w-full rounded-md border border-zinc-300 bg-white py-2 pl-8 pr-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 sm:w-52"
@@ -1680,20 +1694,33 @@ function ConstituencySelector({
     <div className="panel rounded-md p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-bold text-zinc-950 dark:text-white">Constituencies</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {selectedIds.length > 0 && (
-            <button className="text-sm font-semibold text-red-600 dark:text-red-400" onClick={() => onChange([])}>
-              Clear
+            <button
+              className="btn-press rounded-md border border-red-200 p-1.5 text-red-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 active:scale-[0.98] dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40"
+              onClick={() => onChange([])}
+              title="Clear selected constituencies"
+              aria-label="Clear selected constituencies"
+              type="button"
+            >
+              <Eraser className="h-4 w-4" />
             </button>
           )}
-          <button className="text-sm font-semibold text-emerald-700 dark:text-emerald-400" onClick={() => onChange(favorites.map((item) => item.constituencyId))}>
-            Use favorites
+          <button
+            className="btn-press rounded-md border border-amber-200 p-1.5 text-amber-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 active:scale-[0.98] dark:border-amber-900/60 dark:text-amber-400 dark:hover:bg-amber-950/40"
+            onClick={() => onChange(favorites.map((item) => item.constituencyId))}
+            title="Use favorite constituencies"
+            aria-label="Use favorite constituencies"
+            type="button"
+          >
+            <Star className="h-4 w-4" />
           </button>
           <button
-            className="rounded-md border border-zinc-300 p-1.5 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+            className="btn-press rounded-md border border-zinc-300 p-1.5 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
             onClick={() => onCollapsedChange(true)}
             title="Collapse constituencies"
             aria-label="Collapse constituencies"
+            type="button"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
