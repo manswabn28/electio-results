@@ -24,6 +24,12 @@ function apiUrl(path: string): string {
   return `${apiBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+function withProfile(path: string, profileId?: string): string {
+  if (!profileId) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}profile=${encodeURIComponent(profileId)}`;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -36,35 +42,43 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function fetchConstituencies() {
-  return request<ConstituenciesResponse>(apiUrl("/api/constituencies"));
+export function fetchConstituencies(profileId?: string) {
+  return request<ConstituenciesResponse>(apiUrl(withProfile("/api/constituencies", profileId)));
 }
 
-export function fetchCandidates() {
-  return request<CandidatesResponse>(apiUrl("/api/candidates"));
+export function fetchCandidates(profileId?: string) {
+  return request<CandidatesResponse>(apiUrl(withProfile("/api/candidates", profileId)));
 }
 
-export function fetchSummary(ids: string[]) {
+export function fetchSummary(ids: string[], profileId?: string) {
   const params = new URLSearchParams({ ids: ids.join(",") });
-  return request<ResultsSummaryResponse>(apiUrl(`/api/results/summary?${params}`));
+  return request<ResultsSummaryResponse>(apiUrl(withProfile(`/api/results/summary?${params}`, profileId)));
 }
 
-export async function fetchResult(id: string): Promise<ConstituencyResult> {
-  const envelope = await request<ResultEnvelope<ConstituencyResult>>(apiUrl(`/api/results/${encodeURIComponent(id)}`));
+export async function fetchResult(id: string, profileId?: string): Promise<ConstituencyResult> {
+  const envelope = await request<ResultEnvelope<ConstituencyResult>>(apiUrl(withProfile(`/api/results/${encodeURIComponent(id)}`, profileId)));
   return envelope.data;
 }
 
-export function fetchResults(ids: string[]) {
+export function fetchResults(ids: string[], profileId?: string) {
   const params = new URLSearchParams({ ids: ids.join(",") });
-  return request<ResultsDetailsResponse>(apiUrl(`/api/results/details?${params}`));
+  return request<ResultsDetailsResponse>(apiUrl(withProfile(`/api/results/details?${params}`, profileId)));
 }
 
 export function fetchSourceConfig() {
   return request<PublicSourceConfig>(apiUrl("/api/source-config"));
 }
 
-export function fetchPartySummary() {
-  return request<PartySummaryResponse>(apiUrl("/api/party-summary"));
+export function fetchPartySummary(profileId?: string) {
+  return request<PartySummaryResponse>(apiUrl(withProfile("/api/party-summary", profileId)));
+}
+
+export function updateActiveSourceProfile(profileId: string) {
+  return request<PublicSourceConfig>(apiUrl("/api/source-config/active-profile"), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ profileId })
+  });
 }
 
 export function sendTrafficHeartbeat(viewerId: string) {
@@ -93,14 +107,21 @@ export function updateSourceConfig(
   });
 }
 
+export function revertSourceConfig(password: string) {
+  return request<PublicSourceConfig>(apiUrl("/api/admin/source-config/revert"), {
+    method: "POST",
+    headers: { authorization: `Bearer ${password}` }
+  });
+}
+
 export function fetchDiscoveryStatus(password: string) {
   return request<DiscoveredSource>(apiUrl("/api/admin/source-discovery/status"), {
     headers: { authorization: `Bearer ${password}` }
   });
 }
 
-export function fetchSourceDiagnostics(password: string) {
-  return request<SourceDiagnosticsResponse>(apiUrl("/api/admin/source-diagnostics"), {
+export function fetchSourceDiagnostics(password: string, profileId?: string) {
+  return request<SourceDiagnosticsResponse>(apiUrl(withProfile("/api/admin/source-diagnostics", profileId)), {
     headers: { authorization: `Bearer ${password}` }
   });
 }

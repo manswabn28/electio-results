@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, runSourceDiscovery, sendTrafficHeartbeat, updateDiscoverySchedule, updateSourceConfig } from "./api";
+import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
+import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -75,6 +75,13 @@ type WatchProfile = {
   sortMode: SortMode;
 };
 
+type ChangeInsight = {
+  kind: "leader" | "margin" | "winner";
+  label: string;
+  count: number;
+  detail: string;
+};
+
 export function App() {
   const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useLocalStorageState<string[]>(SELECTED_STORAGE_KEY, []);
@@ -94,6 +101,12 @@ export function App() {
   const [cachedResults, setCachedResults] = useLocalStorageState<Record<string, ConstituencyResult>>(CACHED_RESULTS_KEY, {});
   const [cachedConstituencies, setCachedConstituencies] = useLocalStorageState<ConstituencyOption[]>("kerala-election:cached-constituencies", []);
   const [cachedCandidates, setCachedCandidates] = useLocalStorageState<CandidateOption[]>("kerala-election:cached-candidates", []);
+  const [selectedIdsByProfile, setSelectedIdsByProfile] = useLocalStorageState<Record<string, string[]>>("kerala-election:selected-by-profile", {});
+  const [watchedCandidateIdsByProfile, setWatchedCandidateIdsByProfile] = useLocalStorageState<Record<string, string[]>>("kerala-election:watched-candidates-by-profile", {});
+  const [pinnedIdsByProfile, setPinnedIdsByProfile] = useLocalStorageState<Record<string, string[]>>("kerala-election:pinned-by-profile", {});
+  const [cachedResultsByProfile, setCachedResultsByProfile] = useLocalStorageState<Record<string, Record<string, ConstituencyResult>>>("kerala-election:cached-results-by-profile", {});
+  const [cachedConstituenciesByProfile, setCachedConstituenciesByProfile] = useLocalStorageState<Record<string, ConstituencyOption[]>>("kerala-election:cached-constituencies-by-profile", {});
+  const [cachedCandidatesByProfile, setCachedCandidatesByProfile] = useLocalStorageState<Record<string, CandidateOption[]>>("kerala-election:cached-candidates-by-profile", {});
   const [lastCheckedById, setLastCheckedById] = useLocalStorageState<Record<string, number>>("kerala-election:last-checked-by-id", {});
   const [leaderHistory, setLeaderHistory] = useLocalStorageState<Record<string, LeaderHistoryEntry[]>>("kerala-election:leader-history", {});
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
@@ -113,6 +126,8 @@ export function App() {
   const [liveAudioStarted, setLiveAudioStarted] = useLocalStorageState<boolean>("kerala-election:live-audio-started", false);
   const [liveAudioExpanded, setLiveAudioExpanded] = useLocalStorageState<boolean>("kerala-election:live-audio-expanded", false);
   const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
+  const [activeProfileId, setActiveProfileId] = useLocalStorageState<string>("kerala-election:active-source-profile", "");
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const lowBandwidthMode = typeof navigator !== "undefined" && "connection" in navigator && Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData);
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
@@ -120,6 +135,7 @@ export function App() {
   const [tightRaceToasts, setTightRaceToasts] = useState<TightRaceNotification[]>([]);
   const [seenTightRaceIds, setSeenTightRaceIds] = useLocalStorageState<string[]>("kerala-election:seen-tight-race-notifications", []);
   const pendingTightRaceToastIds = useRef<Set<string>>(new Set());
+  const hydratedProfileRef = useRef("");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -234,20 +250,80 @@ export function App() {
     if (Number.isFinite(threshold) && threshold > 0) setAlertThreshold(threshold);
   }, [setAlertThreshold, setPartyFilter, setPinnedIds, setSelectedIds, setSortMode, setWatchedCandidateIds]);
 
-  const constituenciesQuery = useQuery({
-    queryKey: ["constituencies"],
-    queryFn: fetchConstituencies
-  });
-
-  const candidatesQuery = useQuery({
-    queryKey: ["candidates"],
-    queryFn: fetchCandidates,
-    staleTime: Infinity
-  });
-
   const sourceConfigQuery = useQuery({
     queryKey: ["source-config"],
     queryFn: fetchSourceConfig
+  });
+  const sourceProfiles = useMemo(() => (sourceConfigQuery.data?.profiles ?? []).filter((profile) => profile.enabled), [sourceConfigQuery.data?.profiles]);
+  const preferredProfile = useMemo(() => {
+    return sourceProfiles.find((profile) => profile.profileId === activeProfileId)
+      ?? sourceProfiles.find((profile) => /kerala/i.test(profile.stateName))
+      ?? sourceProfiles.find((profile) => profile.profileId === sourceConfigQuery.data?.activeProfileId)
+      ?? sourceProfiles[0];
+  }, [activeProfileId, sourceConfigQuery.data?.activeProfileId, sourceProfiles]);
+  const effectiveProfileId = preferredProfile?.profileId ?? "";
+
+  useEffect(() => {
+    if (!effectiveProfileId || activeProfileId === effectiveProfileId) return;
+    setActiveProfileId(effectiveProfileId);
+  }, [activeProfileId, effectiveProfileId, setActiveProfileId]);
+
+  const activeProfile = useMemo(() => {
+    return sourceProfiles.find((profile) => profile.profileId === effectiveProfileId);
+  }, [effectiveProfileId, sourceProfiles]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current === effectiveProfileId) return;
+    hydratedProfileRef.current = effectiveProfileId;
+    setSelectedIds(selectedIdsByProfile[effectiveProfileId] ?? []);
+    setWatchedCandidateIds(watchedCandidateIdsByProfile[effectiveProfileId] ?? []);
+    setPinnedIds(pinnedIdsByProfile[effectiveProfileId] ?? []);
+    setCachedResults(cachedResultsByProfile[effectiveProfileId] ?? {});
+    setCachedConstituencies(cachedConstituenciesByProfile[effectiveProfileId] ?? []);
+    setCachedCandidates(cachedCandidatesByProfile[effectiveProfileId] ?? []);
+  }, [cachedCandidatesByProfile, cachedConstituenciesByProfile, cachedResultsByProfile, effectiveProfileId, pinnedIdsByProfile, selectedIdsByProfile, setCachedCandidates, setCachedConstituencies, setCachedResults, setPinnedIds, setSelectedIds, setWatchedCandidateIds, watchedCandidateIdsByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current !== effectiveProfileId) return;
+    setSelectedIdsByProfile((current) => areStringArraysEqual(current[effectiveProfileId] ?? [], selectedIds) ? current : { ...current, [effectiveProfileId]: selectedIds });
+  }, [effectiveProfileId, selectedIds, setSelectedIdsByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current !== effectiveProfileId) return;
+    setWatchedCandidateIdsByProfile((current) => areStringArraysEqual(current[effectiveProfileId] ?? [], watchedCandidateIds) ? current : { ...current, [effectiveProfileId]: watchedCandidateIds });
+  }, [effectiveProfileId, setWatchedCandidateIdsByProfile, watchedCandidateIds]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current !== effectiveProfileId) return;
+    setPinnedIdsByProfile((current) => areStringArraysEqual(current[effectiveProfileId] ?? [], pinnedIds) ? current : { ...current, [effectiveProfileId]: pinnedIds });
+  }, [effectiveProfileId, pinnedIds, setPinnedIdsByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current !== effectiveProfileId) return;
+    setCachedResultsByProfile((current) => current[effectiveProfileId] === cachedResults ? current : { ...current, [effectiveProfileId]: cachedResults });
+  }, [cachedResults, effectiveProfileId, setCachedResultsByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current !== effectiveProfileId) return;
+    setCachedConstituenciesByProfile((current) => current[effectiveProfileId] === cachedConstituencies ? current : { ...current, [effectiveProfileId]: cachedConstituencies });
+  }, [cachedConstituencies, effectiveProfileId, setCachedConstituenciesByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId || hydratedProfileRef.current !== effectiveProfileId) return;
+    setCachedCandidatesByProfile((current) => current[effectiveProfileId] === cachedCandidates ? current : { ...current, [effectiveProfileId]: cachedCandidates });
+  }, [cachedCandidates, effectiveProfileId, setCachedCandidatesByProfile]);
+
+  const constituenciesQuery = useQuery({
+    queryKey: ["constituencies", effectiveProfileId],
+    queryFn: () => fetchConstituencies(effectiveProfileId),
+    enabled: Boolean(effectiveProfileId)
+  });
+
+  const candidatesQuery = useQuery({
+    queryKey: ["candidates", effectiveProfileId],
+    queryFn: () => fetchCandidates(effectiveProfileId),
+    enabled: Boolean(effectiveProfileId),
+    staleTime: Infinity
   });
 
   useEffect(() => {
@@ -310,29 +386,29 @@ export function App() {
   }, [candidateOptions]);
 
   const summaryQuery = useQuery({
-    queryKey: ["summary", selectedIds],
-    queryFn: () => fetchSummary(selectedIds),
+    queryKey: ["summary", effectiveProfileId, selectedIds],
+    queryFn: () => fetchSummary(selectedIds, effectiveProfileId),
     enabled: selectedIds.length > 0
   });
 
   const refreshMs = Math.max(5, sourceConfigQuery.data?.refreshIntervalSeconds ?? 30) * 1000;
 
   const allSummaryQuery = useQuery({
-    queryKey: ["summary", "all-winner-watch", constituencyOptions.map((item) => item.constituencyId).join(",")],
-    queryFn: () => fetchSummary(constituencyOptions.map((item) => item.constituencyId)),
+    queryKey: ["summary", "all-winner-watch", effectiveProfileId, constituencyOptions.map((item) => item.constituencyId).join(",")],
+    queryFn: () => fetchSummary(constituencyOptions.map((item) => item.constituencyId), effectiveProfileId),
     enabled: Boolean(constituencyOptions.length),
     refetchInterval: refreshMs
   });
 
   const partySummaryQuery = useQuery({
-    queryKey: ["party-summary"],
-    queryFn: fetchPartySummary,
+    queryKey: ["party-summary", effectiveProfileId],
+    queryFn: () => fetchPartySummary(effectiveProfileId),
     refetchInterval: refreshMs
   });
 
   const detailResultsQuery = useQuery({
-    queryKey: ["results", "details", selectedIds],
-    queryFn: () => fetchResults(selectedIds),
+    queryKey: ["results", "details", effectiveProfileId, selectedIds],
+    queryFn: () => fetchResults(selectedIds, effectiveProfileId),
     enabled: selectedIds.length > 0 && Boolean(summaryQuery.data?.sourceConfigured),
     refetchInterval: refreshMs,
     retry: 3,
@@ -439,7 +515,7 @@ export function App() {
     setSeenWinnerIds((current) => [...new Set([...current, ...newWinners.map((winner) => winner.constituencyId)])]);
     newWinners.forEach((nextWinner, index) => {
       window.setTimeout(() => {
-        void fetchResult(nextWinner.constituencyId)
+        void fetchResult(nextWinner.constituencyId, effectiveProfileId)
           .then((result) => {
             const winner = result.candidates[0];
             addWinnerToast({
@@ -465,7 +541,7 @@ export function App() {
           });
       }, index * 4500);
     });
-  }, [alertRules.winnerDeclared, allSummaryQuery.data?.results, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
+  }, [alertRules.winnerDeclared, allSummaryQuery.data?.results, effectiveProfileId, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
 
   useEffect(() => {
     const closeDeclaredLosses = liveResults.filter((result) => {
@@ -677,6 +753,45 @@ export function App() {
     }
     return warnings;
   }, [results, summaryById]);
+  const changeInsights = useMemo<ChangeInsight[]>(() => {
+    const insights: ChangeInsight[] = [];
+    const leaderChangedCount = leaderChanges.length;
+    if (leaderChangedCount) {
+      insights.push({
+        kind: "leader",
+        label: `Leader changed in ${leaderChangedCount} seat${leaderChangedCount === 1 ? "" : "s"}`,
+        count: leaderChangedCount,
+        detail: leaderChanges.slice(0, 3).map((result) => result.constituencyName).join(", ")
+      });
+    }
+
+    const marginSwings = results.filter((result) => {
+      const previous = previousResults.get(result.constituencyId);
+      return previous && Math.abs(result.margin - previous.margin) >= 5000;
+    });
+    if (marginSwings.length) {
+      insights.push({
+        kind: "margin",
+        label: `Margin swing > 5,000 in ${marginSwings.length} seat${marginSwings.length === 1 ? "" : "s"}`,
+        count: marginSwings.length,
+        detail: marginSwings.slice(0, 3).map((result) => result.constituencyName).join(", ")
+      });
+    }
+
+    const newWinners = results.filter((result) => {
+      const previous = previousResults.get(result.constituencyId);
+      return isDeclaredWinner(result.statusText || result.roundStatus) && previous && !isDeclaredWinner(previous.statusText || previous.roundStatus);
+    });
+    if (newWinners.length) {
+      insights.push({
+        kind: "winner",
+        label: `${newWinners.length} new winner${newWinners.length === 1 ? "" : "s"} declared`,
+        count: newWinners.length,
+        detail: newWinners.slice(0, 3).map((result) => result.constituencyName).join(", ")
+      });
+    }
+    return insights;
+  }, [leaderChanges, previousResults, results]);
   const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds, autoAttentionIds);
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
   const lastEciChangeAt = latestDataUpdatedAt(Object.values(lastChangedAt));
@@ -687,7 +802,7 @@ export function App() {
       : lastEciChangeAt
         ? `Changed ${new Date(lastEciChangeAt).toLocaleTimeString()}`
         : "ECI OK";
-  const showOldResultNotice = Date.now() < Date.parse(KERALA_COUNTING_START_AT) && isOldPreviewSource(sourceConfigQuery.data);
+  const showOldResultNotice = Date.now() < Date.parse(KERALA_COUNTING_START_AT) && isOldPreviewSource(sourceConfigQuery.data, activeProfile);
   const enterWatchMode = () => {
     trackEvent("watch_mode_enter", { selected_count: selectedIds.length });
     setWatchMode(true);
@@ -787,6 +902,17 @@ export function App() {
       void constituenciesQuery.refetch();
     }
   };
+  const switchSourceProfile = async (profile: ElectionSourceProfile) => {
+    if (profile.profileId === effectiveProfileId) {
+      setSourcePickerOpen(false);
+      return;
+    }
+    trackEvent("source_profile_switch", { profile_id: profile.profileId, state: profile.stateName });
+    setActiveProfileId(profile.profileId);
+    setSourcePickerOpen(false);
+    await updateActiveSourceProfile(profile.profileId).catch(() => undefined);
+    void queryClient.invalidateQueries();
+  };
 
   return (
     <main className="min-h-screen max-w-full overflow-x-hidden">
@@ -797,7 +923,24 @@ export function App() {
             <div className="min-w-0">
               <p className="hidden text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 sm:block">Official ECI Source</p>
               <div className="flex min-w-0 items-start justify-between gap-3">
-                <h1 className="brand-title min-w-0 text-xl text-zinc-950 dark:text-white sm:mt-2 sm:text-3xl">Kerala Assembly Election 2026 Live Tracker</h1>
+                <div className="relative min-w-0">
+                  <button
+                    className="brand-title min-w-0 rounded-md text-left text-lg leading-tight text-zinc-950 transition hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 dark:text-white dark:hover:text-emerald-200 sm:mt-2 sm:text-3xl"
+                    onClick={() => setSourcePickerOpen((current) => !current)}
+                    title="Change focused assembly result"
+                    aria-label="Change focused assembly result"
+                    type="button"
+                  >
+                    {activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"} Live Tracker
+                  </button>
+                  {sourcePickerOpen && (
+                    <SourceProfilePicker
+                      profiles={sourceProfiles}
+                      activeProfileId={effectiveProfileId}
+                      onSelect={(profile) => void switchSourceProfile(profile)}
+                    />
+                  )}
+                </div>
                 <button
                   className="btn-press inline-flex shrink-0 items-center justify-center rounded-md border border-zinc-300 p-2 text-zinc-700 transition hover:bg-zinc-100 active:scale-[0.98] dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900 sm:hidden"
                   onClick={enterWatchMode}
@@ -1052,6 +1195,7 @@ export function App() {
                   stale={Object.values(resultFreshnessById).filter((item) => item === "Stale").length}
                   failed={resultQueries.filter((query) => query.isError).length}
                 />
+                <WhatChangedPanel insights={changeInsights} lastCheckedAt={lastSuccessAt} />
               </div>
               <TightRaceSuggestions
                 suggestions={tightRaceSuggestions}
@@ -1065,9 +1209,14 @@ export function App() {
               />
               <SourceConfigPanel
                 sourceConfig={sourceConfigQuery.data}
+                activeProfileId={effectiveProfileId}
                 onUpdated={() => {
                   setCachedConstituencies([]);
                   setCachedCandidates([]);
+                  setCachedResults({});
+                  setCachedConstituenciesByProfile((current) => ({ ...current, [effectiveProfileId]: [] }));
+                  setCachedCandidatesByProfile((current) => ({ ...current, [effectiveProfileId]: [] }));
+                  setCachedResultsByProfile((current) => ({ ...current, [effectiveProfileId]: {} }));
                   setWatchedCandidateIds([]);
                   void queryClient.invalidateQueries({ queryKey: ["source-config"] });
                   void queryClient.invalidateQueries({ queryKey: ["constituencies"] });
@@ -1159,12 +1308,48 @@ function DashboardMetrics({
 }
 
 function OldResultNotice() {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const startsAt = new Date(KERALA_COUNTING_START_AT);
+  const remainingMs = startsAt.getTime() - now;
+  if (remainingMs <= 0) return null;
+
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-0 z-[90] overflow-hidden border-b border-amber-300 bg-amber-50/95 text-amber-950 shadow-sm backdrop-blur dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100" role="status" aria-live="polite">
-      <div className="animate-notice-marquee whitespace-nowrap px-3 py-1.5 text-[11px] font-bold sm:text-xs">
-        Current preview uses old Bihar Assembly Election 2025 result data from ECI. Kerala Assembly Election 2026 live results will appear here after counting starts on {startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })} IST.
+    <>
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-[90] overflow-hidden border-b border-amber-300 bg-amber-50/95 text-amber-950 shadow-sm backdrop-blur dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100" role="status" aria-live="polite">
+        <div className="animate-notice-marquee whitespace-nowrap px-3 py-1.5 text-[11px] font-bold sm:text-xs">
+          Current preview uses old Bihar Assembly Election 2025 result data from ECI. Kerala Assembly Election 2026 live results will appear here after counting starts on {startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })} IST.
+        </div>
       </div>
+      <CountingCountdown remainingMs={remainingMs} />
+    </>
+  );
+}
+
+function CountingCountdown({ remainingMs }: { remainingMs: number }) {
+  const parts = countdownParts(remainingMs);
+  return (
+    <div className="pointer-events-none fixed right-3 top-8 z-[91] rounded-md border border-emerald-200 bg-white/95 px-3 py-2 text-zinc-950 shadow-lg backdrop-blur dark:border-emerald-800 dark:bg-zinc-950/95 dark:text-white sm:right-4" aria-label="Countdown to Kerala counting start">
+      <div className="text-[9px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Kerala counting starts in</div>
+      <div className="mt-1 flex items-end gap-1.5">
+        <CountdownUnit label="D" value={parts.days} />
+        <CountdownUnit label="H" value={parts.hours} />
+        <CountdownUnit label="M" value={parts.minutes} />
+        <CountdownUnit label="S" value={parts.seconds} animated />
+      </div>
+    </div>
+  );
+}
+
+function CountdownUnit({ label, value, animated = false }: { label: string; value: number; animated?: boolean }) {
+  return (
+    <div className={`min-w-8 rounded bg-zinc-100 px-1.5 py-1 text-center dark:bg-zinc-900 ${animated ? "animate-countdown-second" : ""}`}>
+      <div className="font-mono text-base font-black leading-none tabular-nums text-zinc-950 dark:text-white">{String(value).padStart(2, "0")}</div>
+      <div className="mt-0.5 text-[8px] font-black text-zinc-500">{label}</div>
     </div>
   );
 }
@@ -1173,6 +1358,41 @@ function WatchModeSignal({ count }: { count: number }) {
   return (
     <div className="fixed right-0 top-1/2 z-[66] -translate-y-1/2 rounded-l-md border border-r-0 border-emerald-300 bg-emerald-600 px-1.5 py-3 text-[10px] font-black text-white shadow-lg dark:border-emerald-800" title={`${count} live alert${count === 1 ? "" : "s"}`}>
       {count}
+    </div>
+  );
+}
+
+function SourceProfilePicker({
+  profiles,
+  activeProfileId,
+  onSelect
+}: {
+  profiles: ElectionSourceProfile[];
+  activeProfileId: string;
+  onSelect: (profile: ElectionSourceProfile) => void;
+}) {
+  const enabledProfiles = profiles.filter((profile) => profile.enabled);
+  if (enabledProfiles.length <= 1) return null;
+  return (
+    <div className="absolute left-0 top-full z-[80] mt-2 w-[min(92vw,360px)] rounded-md border border-zinc-200 bg-white p-2 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="px-2 pb-2 text-[10px] font-black uppercase tracking-wide text-zinc-500">Focus assembly result</div>
+      <div className="max-h-72 overflow-y-auto">
+        {enabledProfiles.map((profile) => (
+          <button
+            key={profile.profileId}
+            className={`btn-press block w-full rounded-md px-3 py-2 text-left ${profile.profileId === activeProfileId ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100" : "hover:bg-zinc-100 dark:hover:bg-zinc-900"}`}
+            onClick={() => onSelect(profile)}
+            type="button"
+          >
+            <div className="truncate text-sm font-black">{profile.electionTitle}</div>
+            <div className="mt-1 flex items-center gap-2 text-[10px] font-semibold text-zinc-500">
+              <span>{formatNumber(profile.constituencyCount)} seats</span>
+              <span>{profile.sampleVerified ? "Verified" : "Review"}</span>
+              <span>{profile.confidence}%</span>
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1671,6 +1891,32 @@ function DiagnosticsMini({ total, fresh, cached, stale, failed }: { total: numbe
   );
 }
 
+function WhatChangedPanel({ insights, lastCheckedAt }: { insights: ChangeInsight[]; lastCheckedAt?: number }) {
+  return (
+    <div className="mt-3 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-300">What changed</span>
+        <span className="text-[10px] font-semibold text-zinc-400">{lastCheckedAt ? new Date(lastCheckedAt).toLocaleTimeString() : "Waiting"}</span>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {insights.length ? insights.map((insight) => (
+          <div key={insight.kind} className={`rounded-md px-2 py-1.5 text-[11px] font-bold ${changeInsightClass(insight.kind)}`} title={insight.detail || insight.label}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate">{changeInsightIcon(insight.kind)} {insight.label}</span>
+              <span className="shrink-0 rounded bg-white/60 px-1.5 py-0.5 text-[10px] dark:bg-black/20">{insight.count}</span>
+            </div>
+            {insight.detail && <div className="mt-0.5 truncate text-[10px] font-semibold opacity-75">{insight.detail}</div>}
+          </div>
+        )) : (
+          <div className="rounded-md bg-zinc-50 px-2 py-1.5 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+            No major changes in the latest refresh.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConstituencySelector({
   options,
   selectedIds,
@@ -1828,9 +2074,11 @@ function ConstituencySelector({
 
 function SourceConfigPanel({
   sourceConfig,
+  activeProfileId,
   onUpdated
 }: {
   sourceConfig?: PublicSourceConfig;
+  activeProfileId: string;
   onUpdated: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1866,11 +2114,11 @@ function SourceConfigPanel({
     queryKey: ["source-discovery-status"],
     queryFn: () => fetchDiscoveryStatus(password),
     enabled: open && unlocked,
-    refetchInterval: open && unlocked ? 30_000 : false
+    refetchInterval: open && unlocked ? 2_000 : false
   });
   const sourceDiagnosticsQuery = useQuery({
-    queryKey: ["source-diagnostics"],
-    queryFn: () => fetchSourceDiagnostics(password),
+    queryKey: ["source-diagnostics", activeProfileId],
+    queryFn: () => fetchSourceDiagnostics(password, activeProfileId),
     enabled: open && unlocked,
     refetchInterval: open && unlocked ? 60_000 : false
   });
@@ -1890,6 +2138,13 @@ function SourceConfigPanel({
   const discoveryScheduleMutation = useMutation({
     mutationFn: (enabled: boolean) => updateDiscoverySchedule(password, enabled),
     onSuccess: () => {
+      void discoveryStatusQuery.refetch();
+    }
+  });
+  const revertMutation = useMutation({
+    mutationFn: () => revertSourceConfig(password),
+    onSuccess: () => {
+      onUpdated();
       void discoveryStatusQuery.refetch();
     }
   });
@@ -2001,12 +2256,15 @@ function SourceConfigPanel({
                   ? discoveryApplyMutation.error.message
                   : discoveryScheduleMutation.error instanceof Error
                     ? discoveryScheduleMutation.error.message
+                    : revertMutation.error instanceof Error
+                      ? revertMutation.error.message
                     : discoveryStatusQuery.error instanceof Error
                       ? discoveryStatusQuery.error.message
                       : undefined
             }
             onRun={() => discoveryRunMutation.mutate()}
             onApply={() => discoveryApplyMutation.mutate()}
+            onRevert={() => revertMutation.mutate()}
             onScheduleChange={(enabled) => discoveryScheduleMutation.mutate(enabled)}
           />
           <DeploymentReadinessPanel
@@ -2064,6 +2322,7 @@ function SourceDiscoveryAdmin({
   error,
   onRun,
   onApply,
+  onRevert,
   onScheduleChange
 }: {
   status?: DiscoveredSource;
@@ -2072,10 +2331,16 @@ function SourceDiscoveryAdmin({
   error?: string;
   onRun: () => void;
   onApply: () => void;
+  onRevert: () => void;
   onScheduleChange: (enabled: boolean) => void;
 }) {
-  const canApply = Boolean(status?.constituencyListUrl && status?.candidateDetailUrlTemplate && !status.alreadyCurrent && status.confidence >= 60);
+  const canApply = Boolean(status?.constituencyListUrl && status?.candidateDetailUrlTemplate && status.confidence >= 60);
   const schedule = status?.schedule;
+  const [trailOpen, setTrailOpen] = useState(false);
+  const runWithTrail = () => {
+    setTrailOpen(true);
+    onRun();
+  };
   return (
     <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
       <div className="flex items-center justify-between gap-2">
@@ -2109,9 +2374,7 @@ function SourceDiscoveryAdmin({
         </button>
       </div>
       <div className="mt-2 text-[11px] leading-4 text-zinc-500">
-        {status?.alreadyCurrent
-          ? "Current URLs are already validated. Confirm them below; no discovery run is needed unless ECI changes the source."
-          : status?.message ?? "Backend discovery will scan official ECI result links and validate Kerala pages before applying."}
+        {status?.message ?? "Backend discovery will scan official ECI result links, build available assembly profiles, and validate candidate pages before applying."}
       </div>
       {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} · Confidence {status.confidence}%</div>}
       {status?.constituencyListUrl && (
@@ -2144,13 +2407,111 @@ function SourceDiscoveryAdmin({
       )}
       {status?.warnings?.length ? <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">{status.warnings[0]}</div> : null}
       {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onRun} disabled={isLoading} type="button">
-          {isLoading ? "Checking..." : status?.alreadyCurrent ? "Check again" : "Auto discover"}
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={runWithTrail} disabled={isLoading} type="button">
+          {isLoading ? "Checking..." : "Auto discover"}
         </button>
         <button className="btn-press-dark rounded-md bg-zinc-950 px-2 py-1.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50 dark:border dark:border-zinc-700 dark:bg-zinc-900" onClick={onApply} disabled={!canApply || isApplying} type="button">
           {isApplying ? "Applying..." : "Apply found"}
         </button>
+        <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700" onClick={onRevert} disabled={!status?.previousAvailable} type="button">
+          Revert
+        </button>
+      </div>
+      {trailOpen && (
+        <DiscoveryTrailDialog
+          status={status}
+          isLoading={isLoading}
+          isApplying={isApplying}
+          canApply={canApply}
+          onApply={onApply}
+          onClose={() => setTrailOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DiscoveryTrailDialog({
+  status,
+  isLoading,
+  isApplying,
+  canApply,
+  onApply,
+  onClose
+}: {
+  status?: DiscoveredSource;
+  isLoading: boolean;
+  isApplying: boolean;
+  canApply: boolean;
+  onApply: () => void;
+  onClose: () => void;
+}) {
+  const trail = status?.trail ?? [];
+  return (
+    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/40 p-4" onMouseDown={onClose}>
+      <div
+        className="max-h-[86vh] w-full max-w-2xl overflow-hidden rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div>
+            <div className="text-sm font-black">ECI auto discovery progress</div>
+            <div className="mt-1 text-xs text-zinc-500">{status?.message ?? "Waiting for discovery to start..."}</div>
+          </div>
+          <button className="btn-press rounded-md border border-zinc-300 p-2 dark:border-zinc-700" type="button" onClick={onClose} aria-label="Close discovery progress">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="max-h-[56vh] space-y-2 overflow-y-auto p-4">
+          {trail.length === 0 && (
+            <div className="rounded-md bg-zinc-50 p-3 text-xs font-semibold text-zinc-500 dark:bg-zinc-900">
+              Starting discovery trail...
+            </div>
+          )}
+          {trail.map((item, index) => (
+            <div key={`${item.time}-${index}`} className="rounded-md border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+              <div className="flex items-center justify-between gap-2">
+                <span className={`font-black ${item.status === "success" ? "text-emerald-700 dark:text-emerald-300" : item.status === "error" ? "text-red-700 dark:text-red-300" : item.status === "warning" ? "text-amber-700 dark:text-amber-300" : "text-zinc-700 dark:text-zinc-200"}`}>
+                  {item.status === "success" ? "OK" : item.status === "error" ? "Issue" : item.status === "warning" ? "Check" : "Doing"}
+                </span>
+                <span className="text-[10px] font-semibold text-zinc-400">{new Date(item.time).toLocaleTimeString()}</span>
+              </div>
+              <div className="mt-1 font-semibold text-zinc-700 dark:text-zinc-200">{item.message}</div>
+              {item.details?.length ? (
+                <div className="mt-2 space-y-1">
+                  {item.details.slice(0, 6).map((detail) => (
+                    <div key={detail} className="truncate rounded bg-zinc-50 px-2 py-1 text-[10px] text-zinc-500 dark:bg-zinc-900" title={detail}>{detail}</div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+          {status?.profiles?.length ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+              <div className="font-black">Profiles found</div>
+              <div className="mt-2 space-y-2">
+                {status.profiles.map((profile, index) => (
+                  <div key={profile.profileId} className="rounded-md bg-white/70 p-2 dark:bg-zinc-950/60">
+                    <div className="font-black">{index + 1}. {profile.electionTitle}</div>
+                    <div className="mt-1 truncate" title={profile.constituencyListUrl}>Constituencies: {profile.constituencyListUrl}</div>
+                    <div className="truncate" title={profile.candidateDetailUrlTemplate}>Candidates: {profile.candidateDetailUrlTemplate}</div>
+                    {profile.partySummaryUrl && <div className="truncate" title={profile.partySummaryUrl}>Summary: {profile.partySummaryUrl}</div>}
+                    <div className="mt-1">Seats {profile.constituencyCount} · Confidence {profile.confidence}% · {profile.sampleVerified ? "verified" : "needs review"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <button className="btn-press rounded-md border border-zinc-300 px-3 py-2 text-xs font-black dark:border-zinc-700" type="button" onClick={onClose}>
+            Close
+          </button>
+          <button className="btn-press-dark rounded-md bg-zinc-950 px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50 dark:border dark:border-zinc-700 dark:bg-zinc-900" type="button" onClick={onApply} disabled={!canApply || isApplying || isLoading}>
+            {isApplying ? "Applying..." : "Apply changes"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2293,6 +2654,7 @@ function ResultCard({
   onNoteChange: (note: string) => void;
 }) {
   const [notesOpen, setNotesOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const leader = result.candidates[0];
   const runnerUp = result.candidates[1];
   const moreCandidates = result.candidates.slice(2, 4);
@@ -2329,7 +2691,7 @@ function ResultCard({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <HistoryTooltip history={history} />
+            <HistoryTooltip history={history} onOpen={() => setTimelineOpen(true)} />
             <button
               className={`rounded-md p-1 ${note ? "text-emerald-700 dark:text-emerald-300" : "text-zinc-400 hover:text-emerald-700"}`}
               onClick={() => setNotesOpen(!notesOpen)}
@@ -2422,6 +2784,16 @@ function ResultCard({
           </div>
         </div>
       )}
+      {timelineOpen && (
+        <TimelinePlayback
+          result={result}
+          history={history}
+          currentLeader={leaderName}
+          currentParty={leaderParty}
+          currentMargin={result.margin}
+          onClose={() => setTimelineOpen(false)}
+        />
+      )}
     </article>
   );
 }
@@ -2471,7 +2843,7 @@ function MarginSparkline({ history, currentMargin }: { history: LeaderHistoryEnt
   );
 }
 
-function HistoryTooltip({ history }: { history: LeaderHistoryEntry[] }) {
+function HistoryTooltip({ history, onOpen }: { history: LeaderHistoryEntry[]; onOpen: () => void }) {
   return (
     <div className="group relative">
       <button
@@ -2479,6 +2851,7 @@ function HistoryTooltip({ history }: { history: LeaderHistoryEntry[] }) {
         title="Leader history"
         aria-label="Leader history"
         type="button"
+        onClick={onOpen}
       >
         <History className="h-4 w-4" />
       </button>
@@ -2498,6 +2871,131 @@ function HistoryTooltip({ history }: { history: LeaderHistoryEntry[] }) {
         ) : (
           <div className="mt-2 text-xs text-zinc-500">No change recorded in this browser yet.</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function TimelinePlayback({
+  result,
+  history,
+  currentLeader,
+  currentParty,
+  currentMargin,
+  onClose
+}: {
+  result: ConstituencyResult;
+  history: LeaderHistoryEntry[];
+  currentLeader: string;
+  currentParty: string;
+  currentMargin: number;
+  onClose: () => void;
+}) {
+  const timeline = useMemo(() => {
+    const entries = [...history].reverse();
+    const latest: LeaderHistoryEntry = {
+      at: Date.now(),
+      leader: currentLeader,
+      party: currentParty,
+      margin: currentMargin,
+      status: result.statusText || result.roundStatus || "Latest"
+    };
+    const combined = [...entries, latest];
+    return combined.filter((entry, index) => {
+      const previous = combined[index - 1];
+      return !previous || previous.leader !== entry.leader || previous.margin !== entry.margin || previous.status !== entry.status;
+    });
+  }, [currentLeader, currentMargin, currentParty, history, result.roundStatus, result.statusText]);
+  const [index, setIndex] = useState(() => Math.max(0, timeline.length - 1));
+  const [playing, setPlaying] = useState(false);
+  const active = timeline[Math.min(index, Math.max(0, timeline.length - 1))];
+
+  useEffect(() => {
+    setIndex(Math.max(0, timeline.length - 1));
+  }, [timeline.length]);
+
+  useEffect(() => {
+    if (!playing) return;
+    if (index >= timeline.length - 1) {
+      setPlaying(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setIndex((current) => Math.min(timeline.length - 1, current + 1)), 1100);
+    return () => window.clearTimeout(timer);
+  }, [index, playing, timeline.length]);
+
+  return (
+    <div className="fixed inset-0 z-[120] bg-black/35 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${result.constituencyName} timeline playback`} onClick={onClose}>
+      <div className="ml-auto flex h-full w-full max-w-lg flex-col rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950" onClick={(event) => event.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-wide text-sky-700 dark:text-sky-300">Timeline playback</div>
+            <h3 className="mt-1 truncate text-xl font-black text-zinc-950 dark:text-white">{result.constituencyName}</h3>
+          </div>
+          <button className="btn-press shrink-0 rounded-md border border-zinc-300 bg-white p-2 text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200" onClick={onClose} type="button" aria-label="Close timeline" title="Close timeline">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {active ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/40">
+              <div className="text-[10px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Replay point</div>
+              <div className="mt-2 text-2xl font-black text-zinc-950 dark:text-white">{active.leader}</div>
+              <div className="mt-1 text-sm font-bold text-zinc-600 dark:text-zinc-300">{shortPartyName(active.party)} leads by {formatNumber(active.margin)}</div>
+              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} · {new Date(active.at).toLocaleTimeString()}</div>
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-zinc-300 p-6 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700">
+              No timeline movement has been recorded in this browser yet.
+            </div>
+          )}
+          {timeline.length > 0 && (
+            <>
+              <div className="mt-4">
+                <input
+                  className="w-full accent-emerald-700"
+                  type="range"
+                  min={0}
+                  max={Math.max(0, timeline.length - 1)}
+                  value={index}
+                  onChange={(event) => {
+                    setPlaying(false);
+                    setIndex(Number(event.target.value));
+                  }}
+                  aria-label="Timeline playback position"
+                />
+                <div className="mt-1 flex justify-between text-[10px] font-semibold text-zinc-500">
+                  <span>Start</span>
+                  <span>Latest</span>
+                </div>
+              </div>
+              <button className="btn-press-dark mt-3 w-full rounded-md bg-zinc-950 px-3 py-2 text-sm font-black text-white dark:border dark:border-zinc-700 dark:bg-zinc-900" onClick={() => setPlaying((current) => !current)} type="button">
+                {playing ? "Pause replay" : "Play replay"}
+              </button>
+            </>
+          )}
+          <div className="mt-4 space-y-2">
+            {timeline.map((entry, itemIndex) => (
+              <button
+                key={`${entry.at}-${entry.leader}-${itemIndex}`}
+                className={`block w-full rounded-md border px-3 py-2 text-left ${itemIndex === index ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40" : "border-zinc-200 dark:border-zinc-800"}`}
+                onClick={() => {
+                  setPlaying(false);
+                  setIndex(itemIndex);
+                }}
+                type="button"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{entry.leader}</div>
+                    <div className="mt-0.5 text-xs font-semibold text-zinc-500">{shortPartyName(entry.party)} by {formatNumber(entry.margin)}</div>
+                  </div>
+                  <div className="shrink-0 text-right text-[10px] font-semibold text-zinc-500">{new Date(entry.at).toLocaleTimeString()}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2700,8 +3198,14 @@ function latestDataUpdatedAt(values: number[]) {
   return Math.max(0, ...values.filter(Boolean));
 }
 
-function isOldPreviewSource(sourceConfig?: PublicSourceConfig) {
+function areStringArraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function isOldPreviewSource(sourceConfig?: PublicSourceConfig, activeProfile?: ElectionSourceProfile) {
   const sourceText = [
+    activeProfile?.constituencyListUrl,
+    activeProfile?.candidateDetailUrlTemplate,
     sourceConfig?.constituencyListUrl,
     sourceConfig?.candidateDetailUrlTemplate
   ].filter(Boolean).join(" ").toLowerCase();
@@ -2732,6 +3236,22 @@ function formatDuration(totalSeconds: number) {
   return `${minutes || 1}m`;
 }
 
+function formatCountdown(ms: number) {
+  const { days, hours, minutes, seconds } = countdownParts(ms);
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function countdownParts(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return { days, hours, minutes, seconds };
+}
+
 function raceConfidenceLabel(result: ConstituencyResult, countingPercent?: number) {
   if (isDeclaredWinner(result.statusText || result.roundStatus)) return "Declared";
   if ((countingPercent ?? 0) < 25) return "Too early";
@@ -2746,6 +3266,18 @@ function confidenceClass(label: string) {
   if (label === "Tight") return "bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100";
   if (label === "Competitive") return "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100";
   return "bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-200";
+}
+
+function changeInsightIcon(kind: ChangeInsight["kind"]) {
+  if (kind === "leader") return "!";
+  if (kind === "margin") return "+";
+  return "*";
+}
+
+function changeInsightClass(kind: ChangeInsight["kind"]) {
+  if (kind === "leader") return "bg-rose-50 text-rose-800 dark:bg-rose-950/50 dark:text-rose-200";
+  if (kind === "margin") return "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200";
+  return "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200";
 }
 
 function parseRoundProgress(value: string) {

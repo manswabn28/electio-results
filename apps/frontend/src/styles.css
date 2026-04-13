@@ -244,6 +244,25 @@ button:disabled {
   animation: notice-marquee 24s linear infinite;
 }
 
+@keyframes countdown-second-pop {
+  0% {
+    box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.28);
+    transform: scale(1);
+  }
+  45% {
+    box-shadow: 0 0 0 4px rgba(5, 150, 105, 0.12);
+    transform: scale(1.04);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(5, 150, 105, 0);
+    transform: scale(1);
+  }
+}
+
+.animate-countdown-second {
+  animation: countdown-second-pop 1s ease-in-out infinite;
+}
+
 @keyframes winner-toast-in {
   0% {
     opacity: 0;

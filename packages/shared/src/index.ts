@@ -131,6 +131,8 @@ export type SourceConfig = {
   refreshIntervalSeconds: number;
   updatedAt: string;
   updatedBy: string;
+  activeProfileId?: string;
+  profiles?: ElectionSourceProfile[];
 };
 
 export type PublicSourceConfig = {
@@ -141,6 +143,9 @@ export type PublicSourceConfig = {
   updatedAt: string;
   updatedBy: string;
   adminEnabled: boolean;
+  activeProfileId?: string;
+  activeTitle?: string;
+  profiles?: ElectionSourceProfile[];
 };
 
 export type DiscoveredSource = {
@@ -157,6 +162,9 @@ export type DiscoveredSource = {
   sampleVerified?: boolean;
   alreadyCurrent?: boolean;
   autoApplied?: boolean;
+  previousAvailable?: boolean;
+  profiles?: ElectionSourceProfile[];
+  trail?: DiscoveryTrailItem[];
   warnings: string[];
   message: string;
   schedule: {
@@ -170,6 +178,28 @@ export type DiscoveredSource = {
     nextRunAt?: string;
     activeNow: boolean;
   };
+};
+
+export type DiscoveryTrailItem = {
+  time: string;
+  status: "running" | "success" | "warning" | "error";
+  message: string;
+  details?: string[];
+};
+
+export type ElectionSourceProfile = {
+  profileId: string;
+  stateName: string;
+  electionTitle: string;
+  eventFolderUrl: string;
+  constituencyListUrl: string;
+  candidateDetailUrlTemplate: string;
+  partySummaryUrl?: string;
+  constituencyCount: number;
+  confidence: number;
+  sampleVerified: boolean;
+  enabled: boolean;
+  updatedAt: string;
 };
 
 export type PartySeatSummary = {

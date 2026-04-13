@@ -2,7 +2,7 @@ import type { Request, Response, Router } from "express";
 import express from "express";
 import { clearElectionCache, getCandidateIndex, getConstituencies, getConstituencyResult, getConstituencyResults, getPartySummary, getSourceDiagnostics, getSummary } from "./eci/service.js";
 import { applyDiscoveredSource, getDiscoveryStatus, runSourceDiscovery, setDiscoveryScheduleEnabled } from "./eci/discovery.js";
-import { getSourceConfig, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
+import { getSourceConfig, revertSourceConfig, setActiveSourceProfile, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
 import { recordViewer } from "./traffic.js";
 
 export function createApiRouter(): Router {
@@ -33,16 +33,22 @@ export function createApiRouter(): Router {
     res.json(toPublicSourceConfig(next));
   }));
 
+  router.put("/source-config/active-profile", asyncHandler(async (req, res) => {
+    const next = await setActiveSourceProfile(String(req.body?.profileId ?? ""));
+    clearElectionCache();
+    res.json(toPublicSourceConfig(next));
+  }));
+
   router.get("/admin/source-discovery/status", requireAdmin, asyncHandler(async (_req, res) => {
     res.json(getDiscoveryStatus());
   }));
 
-  router.get("/admin/source-diagnostics", requireAdmin, asyncHandler(async (_req, res) => {
-    res.json(await getSourceDiagnostics());
+  router.get("/admin/source-diagnostics", requireAdmin, asyncHandler(async (req, res) => {
+    res.json(await getSourceDiagnostics(parseProfile(req)));
   }));
 
   router.post("/admin/source-discovery/run", requireAdmin, asyncHandler(async (_req, res) => {
-    res.json(await runSourceDiscovery({ autoApply: false, skipIfCurrent: true }));
+    res.json(await runSourceDiscovery({ autoApply: false, skipIfCurrent: false }));
   }));
 
   router.put("/admin/source-discovery/schedule", requireAdmin, asyncHandler(async (req, res) => {
@@ -55,26 +61,32 @@ export function createApiRouter(): Router {
     res.json(applied);
   }));
 
-  router.get("/constituencies", asyncHandler(async (_req, res) => {
-    res.json(await getConstituencies());
+  router.post("/admin/source-config/revert", requireAdmin, asyncHandler(async (_req, res) => {
+    const reverted = await revertSourceConfig();
+    clearElectionCache();
+    res.json(toPublicSourceConfig(reverted));
   }));
 
-  router.get("/candidates", asyncHandler(async (_req, res) => {
-    res.json(await getCandidateIndex());
+  router.get("/constituencies", asyncHandler(async (req, res) => {
+    res.json(await getConstituencies(parseProfile(req)));
+  }));
+
+  router.get("/candidates", asyncHandler(async (req, res) => {
+    res.json(await getCandidateIndex(parseProfile(req)));
   }));
 
   router.get("/results/summary", asyncHandler(async (req, res) => {
     const ids = parseIds(req.query.ids);
-    res.json(await getSummary(ids));
+    res.json(await getSummary(ids, parseProfile(req)));
   }));
 
-  router.get("/party-summary", asyncHandler(async (_req, res) => {
-    res.json(await getPartySummary());
+  router.get("/party-summary", asyncHandler(async (req, res) => {
+    res.json(await getPartySummary(parseProfile(req)));
   }));
 
   router.get("/results/details", asyncHandler(async (req, res) => {
     const ids = parseIds(req.query.ids);
-    res.json(await getConstituencyResults(ids));
+    res.json(await getConstituencyResults(ids, parseProfile(req)));
   }));
 
   router.post("/traffic/heartbeat", asyncHandler(async (req, res) => {
@@ -82,7 +94,7 @@ export function createApiRouter(): Router {
   }));
 
   router.get("/results/:constituencyId", asyncHandler(async (req, res) => {
-    const result = await getConstituencyResult(req.params.constituencyId);
+    const result = await getConstituencyResult(req.params.constituencyId, parseProfile(req));
     res.json({
       generatedAt: new Date().toISOString(),
       sourceConfigured: true,
@@ -91,6 +103,11 @@ export function createApiRouter(): Router {
   }));
 
   return router;
+}
+
+function parseProfile(req: Request): string | undefined {
+  const value = req.query.profile;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function parseIds(value: unknown): string[] {

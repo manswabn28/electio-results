@@ -3,7 +3,7 @@
   "constituencyListUrl": "https://results.eci.gov.in/ResultAcGenNov2025/statewiseS041.htm",
   "candidateDetailUrlTemplate": "https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm",
   "refreshIntervalSeconds": 10,
-  "updatedAt": "2026-04-13T21:28:27.980Z",
+  "updatedAt": "2026-04-13T20:19:09.350Z",
   "updatedBy": "auto-discovery",
   "activeProfileId": "bihar-resultacgennov2025",
   "profiles": [
@@ -16,10 +16,10 @@
       "candidateDetailUrlTemplate": "https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm",
       "partySummaryUrl": "https://results.eci.gov.in/ResultAcGenNov2025/index.htm",
       "constituencyCount": 243,
-      "confidence": 100,
+      "confidence": 95,
       "sampleVerified": true,
       "enabled": true,
-      "updatedAt": "2026-04-13T21:27:43.495Z"
+      "updatedAt": "2026-04-13T20:19:02.669Z"
     }
   ]
 }

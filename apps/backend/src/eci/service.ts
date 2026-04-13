@@ -21,25 +21,20 @@ import {
   parseStatePage,
   toConstituencyOptions
 } from "./parser.js";
-import { buildCandidateDetailUrl, getSourceConfig, resolveConfiguredUrl } from "../sourceConfigStore.js";
+import { buildCandidateDetailUrl, getEffectiveSourceConfig, getSourceConfig, resolveConfiguredUrl } from "../sourceConfigStore.js";
 
 const cache = new TtlCache<unknown>(config.CACHE_TTL_SECONDS * 1000);
 const backgroundRefreshes = new Map<string, Promise<unknown>>();
 const foregroundRefreshes = new Map<string, Promise<unknown>>();
-let candidateIndex:
-  | {
-      sourceKey: string;
-      response: CandidatesResponse;
-    }
-  | undefined;
-let candidateIndexPromise: Promise<CandidatesResponse> | undefined;
+const candidateIndexes = new Map<string, CandidatesResponse>();
+const candidateIndexPromises = new Map<string, Promise<CandidatesResponse>>();
 
-async function getKeralaStatePageUrl(): Promise<string | undefined> {
-  const cacheKey = "kerala-state-page-url";
+async function getKeralaStatePageUrl(profileId?: string): Promise<string | undefined> {
+  const cacheKey = `state-page-url:${profileId ?? "active"}`;
   const cached = cache.get(cacheKey) as string | undefined;
   if (cached) return cached;
 
-  const sourceConfig = await getSourceConfig();
+  const sourceConfig = await getEffectiveSourceConfig(profileId);
   if (sourceConfig.constituencyListUrl) {
     const url = resolveConfiguredUrl(sourceConfig, sourceConfig.constituencyListUrl);
     cache.set(cacheKey, url);
@@ -55,29 +50,29 @@ async function getKeralaStatePageUrl(): Promise<string | undefined> {
   return undefined;
 }
 
-async function getStateSummaries(): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
-  const cacheKey = "state-summaries";
+async function getStateSummaries(profileId?: string): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
+  const cacheKey = `state-summaries:${profileId ?? "active"}`;
   const cached = cache.get(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
   if (cached) return cached;
   const stale = cache.getStale(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
   if (stale?.summaries.length) {
-    refreshInBackground(cacheKey, () => refreshStateSummaries(cacheKey));
+    refreshInBackground(cacheKey, () => refreshStateSummaries(cacheKey, profileId));
     return stale;
   }
 
-  return refreshOnce(cacheKey, () => refreshStateSummaries(cacheKey));
+  return refreshOnce(cacheKey, () => refreshStateSummaries(cacheKey, profileId));
 }
 
-async function refreshStateSummaries(cacheKey: string): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
+async function refreshStateSummaries(cacheKey: string, profileId?: string): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
   try {
-    const sourceUrl = await getKeralaStatePageUrl();
+    const sourceUrl = await getKeralaStatePageUrl(profileId);
     if (!sourceUrl) {
       const value = fallbackState("ECI Kerala statewise result page is not configured or not discoverable yet.");
       cache.set(cacheKey, value);
       return value;
     }
 
-    const sourceConfig = await getSourceConfig();
+    const sourceConfig = await getEffectiveSourceConfig(profileId);
     const summaries = await loadAllStatePageSummaries(sourceUrl, sourceConfig);
     const value = { sourceUrl, summaries };
     cache.set(cacheKey, value);
@@ -118,8 +113,8 @@ async function loadAllStatePageSummaries(sourceUrl: string, sourceConfig: Awaite
   return byNumber.size ? [...byNumber.values()] : parseStatePage(firstHtml, sourceUrl, config.defaultFavoriteIds);
 }
 
-export async function getConstituencies(): Promise<ConstituenciesResponse> {
-  const { sourceUrl, summaries, error } = await getStateSummaries();
+export async function getConstituencies(profileId?: string): Promise<ConstituenciesResponse> {
+  const { sourceUrl, summaries, error } = await getStateSummaries(profileId);
   return {
     generatedAt: new Date().toISOString(),
     sourceConfigured: Boolean(sourceUrl),
@@ -129,21 +124,24 @@ export async function getConstituencies(): Promise<ConstituenciesResponse> {
   };
 }
 
-export async function getCandidateIndex(): Promise<CandidatesResponse> {
-  const sourceConfig = await getSourceConfig();
-  const sourceKey = `${sourceConfig.updatedAt}|${sourceConfig.constituencyListUrl}|${sourceConfig.candidateDetailUrlTemplate}`;
-  if (candidateIndex?.sourceKey === sourceKey) return candidateIndex.response;
-  if (candidateIndexPromise) return candidateIndexPromise;
+export async function getCandidateIndex(profileId?: string): Promise<CandidatesResponse> {
+  const sourceConfig = await getEffectiveSourceConfig(profileId);
+  const sourceKey = `${sourceConfig.activeProfileId ?? "active"}|${sourceConfig.updatedAt}|${sourceConfig.constituencyListUrl}|${sourceConfig.candidateDetailUrlTemplate}`;
+  const cached = candidateIndexes.get(sourceKey);
+  if (cached) return cached;
+  const running = candidateIndexPromises.get(sourceKey);
+  if (running) return running;
 
-  candidateIndexPromise = buildCandidateIndex(sourceKey).finally(() => {
-    candidateIndexPromise = undefined;
+  const promise = buildCandidateIndex(sourceKey, profileId).finally(() => {
+    candidateIndexPromises.delete(sourceKey);
   });
+  candidateIndexPromises.set(sourceKey, promise);
 
-  return candidateIndexPromise;
+  return promise;
 }
 
-async function buildCandidateIndex(sourceKey: string): Promise<CandidatesResponse> {
-  const { sourceUrl, summaries, error } = await getStateSummaries();
+async function buildCandidateIndex(sourceKey: string, profileId?: string): Promise<CandidatesResponse> {
+  const { sourceUrl, summaries, error } = await getStateSummaries(profileId);
   if (!sourceUrl) {
     return {
       generatedAt: new Date().toISOString(),
@@ -159,7 +157,7 @@ async function buildCandidateIndex(sourceKey: string): Promise<CandidatesRespons
 
   for (const summary of summaries.filter((item) => item.sourceUrl)) {
     try {
-      const result = await getConstituencyResult(summary.constituencyId);
+      const result = await getConstituencyResult(summary.constituencyId, profileId);
       for (const candidate of result.candidates) {
         candidates.push({
           candidateId: `${summary.constituencyId}:${candidate.serialNo}:${normalizeComparable(candidate.candidateName)}`,
@@ -187,13 +185,13 @@ async function buildCandidateIndex(sourceKey: string): Promise<CandidatesRespons
     candidates,
     errors
   };
-  candidateIndex = { sourceKey, response };
+  candidateIndexes.set(sourceKey, response);
   logger.info({ candidates: candidates.length, errors: errors.length }, "Candidate index built");
   return response;
 }
 
-export async function getSummary(ids: string[]): Promise<ResultsSummaryResponse> {
-  const { sourceUrl, summaries, error } = await getStateSummaries();
+export async function getSummary(ids: string[], profileId?: string): Promise<ResultsSummaryResponse> {
+  const { sourceUrl, summaries, error } = await getStateSummaries(profileId);
   const requested = filterRequested(summaries, ids);
   return {
     generatedAt: new Date().toISOString(),
@@ -206,20 +204,20 @@ export async function getSummary(ids: string[]): Promise<ResultsSummaryResponse>
   };
 }
 
-export async function getConstituencyResult(constituencyId: string): Promise<ConstituencyResult> {
-  const cacheKey = `result:${constituencyId}`;
+export async function getConstituencyResult(constituencyId: string, profileId?: string): Promise<ConstituencyResult> {
+  const cacheKey = `result:${profileId ?? "active"}:${constituencyId}`;
   const cached = cache.get(cacheKey) as ConstituencyResult | undefined;
   if (cached) return cached;
   const stale = cache.getStale(cacheKey) as ConstituencyResult | undefined;
   if (stale) {
-    refreshInBackground(cacheKey, () => refreshConstituencyResult(constituencyId, cacheKey));
+    refreshInBackground(cacheKey, () => refreshConstituencyResult(constituencyId, cacheKey, profileId));
     return stale;
   }
 
-  return refreshOnce(cacheKey, () => refreshConstituencyResult(constituencyId, cacheKey));
+  return refreshOnce(cacheKey, () => refreshConstituencyResult(constituencyId, cacheKey, profileId));
 }
 
-export async function getConstituencyResults(ids: string[]): Promise<ResultsDetailsResponse> {
+export async function getConstituencyResults(ids: string[], profileId?: string): Promise<ResultsDetailsResponse> {
   const uniqueIds = [...new Set(ids.filter(Boolean))];
   const results: ConstituencyResult[] = [];
   const errors: { constituencyId?: string; message: string; code?: string }[] = [];
@@ -227,7 +225,7 @@ export async function getConstituencyResults(ids: string[]): Promise<ResultsDeta
   await Promise.all(
     uniqueIds.map(async (id) => {
       try {
-        results.push(await getConstituencyResult(id));
+        results.push(await getConstituencyResult(id, profileId));
       } catch (error) {
         errors.push({
           constituencyId: id,
@@ -246,8 +244,8 @@ export async function getConstituencyResults(ids: string[]): Promise<ResultsDeta
   };
 }
 
-async function refreshConstituencyResult(constituencyId: string, cacheKey: string): Promise<ConstituencyResult> {
-  const { sourceUrl, summaries } = await getStateSummaries();
+async function refreshConstituencyResult(constituencyId: string, cacheKey: string, profileId?: string): Promise<ConstituencyResult> {
+  const { sourceUrl, summaries } = await getStateSummaries(profileId);
   if (!sourceUrl) {
     throw Object.assign(new Error("Live ECI source is not configured yet."), { statusCode: 503, code: "SOURCE_NOT_CONFIGURED" });
   }
@@ -277,21 +275,21 @@ async function refreshConstituencyResult(constituencyId: string, cacheKey: strin
   }
 }
 
-export async function getPartySummary(): Promise<PartySummaryResponse> {
-  const cacheKey = "party-summary";
+export async function getPartySummary(profileId?: string): Promise<PartySummaryResponse> {
+  const cacheKey = `party-summary:${profileId ?? "active"}`;
   const cached = cache.get(cacheKey) as PartySummaryResponse | undefined;
   if (cached) return cached;
   const stale = cache.getStale(cacheKey) as PartySummaryResponse | undefined;
   if (stale) {
-    refreshInBackground(cacheKey, () => refreshPartySummary(cacheKey));
+    refreshInBackground(cacheKey, () => refreshPartySummary(cacheKey, profileId));
     return stale;
   }
 
-  return refreshOnce(cacheKey, () => refreshPartySummary(cacheKey));
+  return refreshOnce(cacheKey, () => refreshPartySummary(cacheKey, profileId));
 }
 
-async function refreshPartySummary(cacheKey: string): Promise<PartySummaryResponse> {
-  const sourceConfig = await getSourceConfig();
+async function refreshPartySummary(cacheKey: string, profileId?: string): Promise<PartySummaryResponse> {
+  const sourceConfig = await getEffectiveSourceConfig(profileId);
   const listUrl = resolveConfiguredUrl(sourceConfig, sourceConfig.constituencyListUrl);
   const indexUrl = new URL("index.htm", listUrl).toString();
   try {
@@ -320,20 +318,20 @@ export function clearElectionCache(): void {
   cache.clear();
   backgroundRefreshes.clear();
   foregroundRefreshes.clear();
-  candidateIndex = undefined;
-  candidateIndexPromise = undefined;
+  candidateIndexes.clear();
+  candidateIndexPromises.clear();
 }
 
-export async function getSourceDiagnostics(): Promise<SourceDiagnosticsResponse> {
+export async function getSourceDiagnostics(profileId?: string): Promise<SourceDiagnosticsResponse> {
   const errors: SourceDiagnosticsResponse["errors"] = [];
-  const { sourceUrl, summaries, error } = await getStateSummaries();
+  const { sourceUrl, summaries, error } = await getStateSummaries(profileId);
   if (error) errors.push({ message: error, code: "STATE_SUMMARY_WARNING" });
 
   let sampleDetailCount = 0;
   let sampleCandidateCount = 0;
   for (const summary of summaries.filter((item) => item.sourceUrl).slice(0, 3)) {
     try {
-      const result = await getConstituencyResult(summary.constituencyId);
+      const result = await getConstituencyResult(summary.constituencyId, profileId);
       sampleDetailCount += 1;
       sampleCandidateCount += result.candidates.length;
     } catch (detailError) {
@@ -347,7 +345,7 @@ export async function getSourceDiagnostics(): Promise<SourceDiagnosticsResponse>
 
   let partySummaryCount = 0;
   try {
-    partySummaryCount = (await getPartySummary()).parties.length;
+    partySummaryCount = (await getPartySummary(profileId)).parties.length;
   } catch (partyError) {
     errors.push({
       message: partyError instanceof Error ? partyError.message : "Party summary check failed.",
