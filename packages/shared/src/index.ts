@@ -109,6 +109,19 @@ export type HealthResponse = {
   sourceConfigured: boolean;
 };
 
+export type SourceDiagnosticsResponse = {
+  generatedAt: string;
+  sourceConfigured: boolean;
+  uptimeSeconds: number;
+  cacheTtlSeconds: number;
+  sourceUrl?: string;
+  constituencyCount: number;
+  sampleDetailCount: number;
+  sampleCandidateCount: number;
+  partySummaryCount: number;
+  errors: ApiError[];
+};
+
 export type SortMode = "selected" | "marginAsc" | "marginDesc" | "leader";
 
 export type SourceConfig = {

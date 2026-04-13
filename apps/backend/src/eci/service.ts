@@ -6,6 +6,7 @@ import type {
   ConstituencySummary,
   PartySummaryResponse,
   ResultsDetailsResponse,
+  SourceDiagnosticsResponse,
   ResultsSummaryResponse
 } from "@kerala-election/shared";
 import { TtlCache } from "../cache.js";
@@ -321,6 +322,51 @@ export function clearElectionCache(): void {
   foregroundRefreshes.clear();
   candidateIndex = undefined;
   candidateIndexPromise = undefined;
+}
+
+export async function getSourceDiagnostics(): Promise<SourceDiagnosticsResponse> {
+  const errors: SourceDiagnosticsResponse["errors"] = [];
+  const { sourceUrl, summaries, error } = await getStateSummaries();
+  if (error) errors.push({ message: error, code: "STATE_SUMMARY_WARNING" });
+
+  let sampleDetailCount = 0;
+  let sampleCandidateCount = 0;
+  for (const summary of summaries.filter((item) => item.sourceUrl).slice(0, 3)) {
+    try {
+      const result = await getConstituencyResult(summary.constituencyId);
+      sampleDetailCount += 1;
+      sampleCandidateCount += result.candidates.length;
+    } catch (detailError) {
+      errors.push({
+        constituencyId: summary.constituencyId,
+        message: detailError instanceof Error ? detailError.message : "Sample detail check failed.",
+        code: "DETAIL_SAMPLE_FAILED"
+      });
+    }
+  }
+
+  let partySummaryCount = 0;
+  try {
+    partySummaryCount = (await getPartySummary()).parties.length;
+  } catch (partyError) {
+    errors.push({
+      message: partyError instanceof Error ? partyError.message : "Party summary check failed.",
+      code: "PARTY_SUMMARY_FAILED"
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sourceConfigured: Boolean(sourceUrl),
+    uptimeSeconds: Math.round(process.uptime()),
+    cacheTtlSeconds: config.CACHE_TTL_SECONDS,
+    sourceUrl,
+    constituencyCount: sourceUrl ? summaries.length : 0,
+    sampleDetailCount,
+    sampleCandidateCount,
+    partySummaryCount,
+    errors
+  };
 }
 
 function refreshInBackground<T>(key: string, task: () => Promise<T>): void {

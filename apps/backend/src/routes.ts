@@ -1,6 +1,6 @@
 import type { Request, Response, Router } from "express";
 import express from "express";
-import { clearElectionCache, getCandidateIndex, getConstituencies, getConstituencyResult, getConstituencyResults, getPartySummary, getSummary } from "./eci/service.js";
+import { clearElectionCache, getCandidateIndex, getConstituencies, getConstituencyResult, getConstituencyResults, getPartySummary, getSourceDiagnostics, getSummary } from "./eci/service.js";
 import { applyDiscoveredSource, getDiscoveryStatus, runSourceDiscovery, setDiscoveryScheduleEnabled } from "./eci/discovery.js";
 import { getSourceConfig, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
 import { recordViewer } from "./traffic.js";
@@ -35,6 +35,10 @@ export function createApiRouter(): Router {
 
   router.get("/admin/source-discovery/status", requireAdmin, asyncHandler(async (_req, res) => {
     res.json(getDiscoveryStatus());
+  }));
+
+  router.get("/admin/source-diagnostics", requireAdmin, asyncHandler(async (_req, res) => {
+    res.json(await getSourceDiagnostics());
   }));
 
   router.post("/admin/source-discovery/run", requireAdmin, asyncHandler(async (_req, res) => {

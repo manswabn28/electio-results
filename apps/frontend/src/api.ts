@@ -7,6 +7,7 @@ import type {
   PartySummaryResponse,
   PublicSourceConfig,
   ResultEnvelope,
+  SourceDiagnosticsResponse,
   ResultsSummaryResponse,
   TrafficResponse
 } from "@kerala-election/shared";
@@ -94,6 +95,12 @@ export function updateSourceConfig(
 
 export function fetchDiscoveryStatus(password: string) {
   return request<DiscoveredSource>(apiUrl("/api/admin/source-discovery/status"), {
+    headers: { authorization: `Bearer ${password}` }
+  });
+}
+
+export function fetchSourceDiagnostics(password: string) {
+  return request<SourceDiagnosticsResponse>(apiUrl("/api/admin/source-diagnostics"), {
     headers: { authorization: `Bearer ${password}` }
   });
 }

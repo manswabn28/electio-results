@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, PublicSourceConfig, SortMode } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSummary, runSourceDiscovery, sendTrafficHeartbeat, updateDiscoverySchedule, updateSourceConfig } from "./api";
+import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
+import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, runSourceDiscovery, sendTrafficHeartbeat, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -15,6 +15,7 @@ const TIGHT_MARGIN_LIMIT = 5000;
 const HIGH_TIGHT_MARGIN_LIMIT = 1000;
 const TIGHT_RACE_NOTIFY_MIN_PROGRESS = 25;
 const ADMIN_PASSWORD = "ldfudf#2026";
+const KERALA_COUNTING_START_AT = "2026-05-04T06:00:00+05:30";
 
 const LIVE_CHANNELS = [
   { id: "reporter-tv", label: "Reporter Live", videoId: "nObUcHKZEGY" },
@@ -112,6 +113,7 @@ export function App() {
   const [liveAudioStarted, setLiveAudioStarted] = useLocalStorageState<boolean>("kerala-election:live-audio-started", false);
   const [liveAudioExpanded, setLiveAudioExpanded] = useLocalStorageState<boolean>("kerala-election:live-audio-expanded", false);
   const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
+  const lowBandwidthMode = typeof navigator !== "undefined" && "connection" in navigator && Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData);
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
   const [lostToasts, setLostToasts] = useState<LostNotification[]>([]);
@@ -654,7 +656,28 @@ export function App() {
       return party === partyFilter;
     });
   }, [partyFilter, results]);
-  const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds);
+  const autoAttentionIds = useMemo(() => {
+    const changed = new Set(leaderChanges.map((result) => result.constituencyId));
+    return visibleResults
+      .filter((result) => changed.has(result.constituencyId) || isDeclaredWinner(result.statusText || result.roundStatus) || result.margin <= alertThreshold)
+      .map((result) => result.constituencyId);
+  }, [alertThreshold, leaderChanges, visibleResults]);
+  const summaryById = useMemo(() => new Map((summaryQuery.data?.results ?? []).map((summary) => [summary.constituencyId, summary])), [summaryQuery.data?.results]);
+  const integrityWarningsById = useMemo(() => {
+    const warnings: Record<string, string> = {};
+    for (const result of results) {
+      const summary = summaryById.get(result.constituencyId);
+      if (!summary) continue;
+      const summaryLeader = normalizeCandidateName(summary.leadingCandidate);
+      const detailLeader = normalizeCandidateName(result.leadingCandidate || result.candidates[0]?.candidateName || "");
+      const summaryMargin = Number(summary.margin || 0);
+      if ((summaryLeader && detailLeader && summaryLeader !== detailLeader) || (summaryMargin > 0 && result.margin > 0 && Math.abs(summaryMargin - result.margin) > 0)) {
+        warnings[result.constituencyId] = "State summary and detail page are not fully aligned yet. ECI pages may update at slightly different times.";
+      }
+    }
+    return warnings;
+  }, [results, summaryById]);
+  const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds, autoAttentionIds);
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
   const lastEciChangeAt = latestDataUpdatedAt(Object.values(lastChangedAt));
   const sourceHealth = hasSourceWarning || partySummaryQuery.isError || resultQueries.some((query) => query.isError)
@@ -664,6 +687,7 @@ export function App() {
       : lastEciChangeAt
         ? `Changed ${new Date(lastEciChangeAt).toLocaleTimeString()}`
         : "ECI OK";
+  const showOldResultNotice = Date.now() < Date.parse(KERALA_COUNTING_START_AT) && isOldPreviewSource(sourceConfigQuery.data);
   const enterWatchMode = () => {
     trackEvent("watch_mode_enter", { selected_count: selectedIds.length });
     setWatchMode(true);
@@ -766,6 +790,7 @@ export function App() {
 
   return (
     <main className="min-h-screen max-w-full overflow-x-hidden">
+      {showOldResultNotice && <OldResultNotice />}
       {!watchMode && <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-4 px-4 py-3 sm:gap-6 sm:px-6 sm:py-5 lg:px-8">
           <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -939,6 +964,8 @@ export function App() {
                 onRemove={() => removeSelectedConstituency(result.constituencyId)}
                 changedAt={lastChangedAt[result.constituencyId]}
                 leaderChanged={leaderChanges.some((item) => item.constituencyId === result.constituencyId)}
+                integrityWarning={integrityWarningsById[result.constituencyId]}
+                lowBandwidthMode={lowBandwidthMode}
                 history={leaderHistory[result.constituencyId] ?? []}
                 note={constituencyNotes[result.constituencyId] ?? ""}
                 onNoteChange={(note) => setConstituencyNotes((current) => ({ ...current, [result.constituencyId]: note }))}
@@ -1068,25 +1095,14 @@ export function App() {
       {watchMode && (leaderChanges.length > 0 || winnerToasts.length > 0 || tightRaceToasts.length > 0) && (
         <WatchModeSignal count={leaderChanges.length + winnerToasts.length + tightRaceToasts.length} />
       )}
-      {winnerToasts.length > 0 && (
+      {(winnerToasts.length > 0 || tightRaceToasts.length > 0 || lostToasts.length > 0) && (
         <div className="fixed bottom-24 right-4 z-[70] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-3 sm:bottom-4">
           {winnerToasts.map((winner) => (
-            <WinnerToast key={winner.id} winner={winner} onClose={() => setWinnerToasts((current) => current.filter((item) => item.id !== winner.id))} />
+            <WinnerToast key={`winner-${winner.id}`} winner={winner} onClose={() => setWinnerToasts((current) => current.filter((item) => item.id !== winner.id))} />
           ))}
-        </div>
-      )}
-      {lostToasts.length > 0 && (
-        <div className="fixed bottom-24 left-4 z-[70] flex w-[calc(100vw-2rem)] max-w-md flex-col gap-3 sm:bottom-24">
-          {lostToasts.map((lost) => (
-            <LostToast key={lost.id} lost={lost} onClose={() => setLostToasts((current) => current.filter((item) => item.id !== lost.id))} />
-          ))}
-        </div>
-      )}
-      {tightRaceToasts.length > 0 && (
-        <div className="fixed bottom-48 left-4 z-[65] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:bottom-44">
           {tightRaceToasts.map((race) => (
             <TightRaceToast
-              key={race.id}
+              key={`tight-${race.id}`}
               race={race}
               onAdd={() => {
                 setSelectedIds((current) => current.includes(race.constituencyId) ? current : [...current, race.constituencyId]);
@@ -1096,13 +1112,16 @@ export function App() {
               onClose={() => setTightRaceToasts((current) => current.filter((item) => item.id !== race.id))}
             />
           ))}
+          {lostToasts.map((lost) => (
+            <LostToast key={`lost-${lost.id}`} lost={lost} onClose={() => setLostToasts((current) => current.filter((item) => item.id !== lost.id))} />
+          ))}
         </div>
       )}
       <LiveAudioPlayer
         channels={LIVE_CHANNELS}
         selectedChannelId={selectedLiveChannelId}
         onSelectedChannelIdChange={setSelectedLiveChannelId}
-        started={liveAudioStarted}
+        started={liveAudioStarted && !lowBandwidthMode}
         expanded={liveAudioExpanded}
         onStart={() => {
           setLiveAudioStarted(true);
@@ -1136,6 +1155,17 @@ function DashboardMetrics({
       <Metric label="Last sync" value={lastSuccessAt ? new Date(lastSuccessAt).toLocaleTimeString() : "Waiting"} />
       <Metric label="Source" value={sourceHealth} />
     </>
+  );
+}
+
+function OldResultNotice() {
+  const startsAt = new Date(KERALA_COUNTING_START_AT);
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[90] overflow-hidden border-b border-amber-300 bg-amber-50/95 text-amber-950 shadow-sm backdrop-blur dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100" role="status" aria-live="polite">
+      <div className="animate-notice-marquee whitespace-nowrap px-3 py-1.5 text-[11px] font-bold sm:text-xs">
+        Current preview uses old Bihar Assembly Election 2025 result data from ECI. Kerala Assembly Election 2026 live results will appear here after counting starts on {startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })} IST.
+      </div>
+    </div>
   );
 }
 
@@ -1838,6 +1868,12 @@ function SourceConfigPanel({
     enabled: open && unlocked,
     refetchInterval: open && unlocked ? 30_000 : false
   });
+  const sourceDiagnosticsQuery = useQuery({
+    queryKey: ["source-diagnostics"],
+    queryFn: () => fetchSourceDiagnostics(password),
+    enabled: open && unlocked,
+    refetchInterval: open && unlocked ? 60_000 : false
+  });
   const discoveryRunMutation = useMutation({
     mutationFn: () => runSourceDiscovery(password),
     onSuccess: () => {
@@ -1973,6 +2009,12 @@ function SourceConfigPanel({
             onApply={() => discoveryApplyMutation.mutate()}
             onScheduleChange={(enabled) => discoveryScheduleMutation.mutate(enabled)}
           />
+          <DeploymentReadinessPanel
+            diagnostics={sourceDiagnosticsQuery.data}
+            isLoading={sourceDiagnosticsQuery.isFetching}
+            error={sourceDiagnosticsQuery.error instanceof Error ? sourceDiagnosticsQuery.error.message : undefined}
+            onRun={() => void sourceDiagnosticsQuery.refetch()}
+          />
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="refresh-seconds">Refresh seconds</label>
           <input
             id="refresh-seconds"
@@ -2077,6 +2119,19 @@ function SourceDiscoveryAdmin({
           Found: {status.constituencyCount ?? 0} seats · {status.sampleVerified ? "details verified" : "details pending"}
         </div>
       )}
+      {status?.checkedAt && (
+        <div className="mt-2 grid grid-cols-3 gap-1">
+          {[
+            ["Kerala page", Boolean(status.constituencyListUrl)],
+            ["Detail URL", Boolean(status.candidateDetailUrlTemplate)],
+            ["Samples", Boolean(status.sampleVerified)]
+          ].map(([label, ok]) => (
+            <div key={String(label)} className={`rounded-md px-2 py-1 text-center text-[10px] font-black ${ok ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"}`}>
+              {ok ? "OK" : "Wait"} · {label}
+            </div>
+          ))}
+        </div>
+      )}
       {status?.status === "applied" && (
         <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-[10px] leading-4 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
           <div className="font-black uppercase tracking-wide">Auto-apply report</div>
@@ -2097,6 +2152,50 @@ function SourceDiscoveryAdmin({
           {isApplying ? "Applying..." : "Apply found"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function DeploymentReadinessPanel({
+  diagnostics,
+  isLoading,
+  error,
+  onRun
+}: {
+  diagnostics?: SourceDiagnosticsResponse;
+  isLoading: boolean;
+  error?: string;
+  onRun: () => void;
+}) {
+  const checks = [
+    { label: "Seats", value: diagnostics?.constituencyCount ?? 0, ok: Boolean((diagnostics?.constituencyCount ?? 0) > 0) },
+    { label: "Details", value: diagnostics?.sampleDetailCount ?? 0, ok: Boolean((diagnostics?.sampleDetailCount ?? 0) > 0) },
+    { label: "Candidates", value: diagnostics?.sampleCandidateCount ?? 0, ok: Boolean((diagnostics?.sampleCandidateCount ?? 0) > 0) },
+    { label: "Parties", value: diagnostics?.partySummaryCount ?? 0, ok: Boolean((diagnostics?.partySummaryCount ?? 0) > 0) }
+  ];
+  return (
+    <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-300">Deployment readiness</div>
+          <div className="mt-1 text-[11px] font-semibold text-zinc-500">
+            API {apiBaseForDiagnostics()} · TTL {diagnostics?.cacheTtlSeconds ?? "-"}s · Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
+          </div>
+        </div>
+        <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onRun} disabled={isLoading} type="button">
+          {isLoading ? "Testing..." : "Test source"}
+        </button>
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1">
+        {checks.map((check) => (
+          <div key={check.label} className={`rounded-md px-2 py-1 text-center text-[10px] font-black ${check.ok ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"}`}>
+            <div>{formatNumber(check.value)}</div>
+            <div className="font-semibold">{check.label}</div>
+          </div>
+        ))}
+      </div>
+      {diagnostics?.errors?.length ? <div className="mt-2 truncate text-[10px] text-amber-700 dark:text-amber-300" title={diagnostics.errors[0].message}>{diagnostics.errors[0].message}</div> : null}
+      {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
     </div>
   );
 }
@@ -2172,6 +2271,8 @@ function ResultCard({
   onRemove,
   changedAt,
   leaderChanged,
+  integrityWarning,
+  lowBandwidthMode,
   history,
   note,
   onNoteChange
@@ -2185,6 +2286,8 @@ function ResultCard({
   onRemove: () => void;
   changedAt?: number;
   leaderChanged: boolean;
+  integrityWarning?: string;
+  lowBandwidthMode: boolean;
   history: LeaderHistoryEntry[];
   note: string;
   onNoteChange: (note: string) => void;
@@ -2206,6 +2309,8 @@ function ResultCard({
   const closeFight = result.margin <= 5000;
   const veryCloseFight = result.margin <= 1000;
   const confidence = raceConfidenceLabel(result, countingPercent);
+  const leaderVotesChanged = previous ? (leader?.totalVotes ?? 0) !== (previous.candidates[0]?.totalVotes ?? 0) : false;
+  const marginChanged = previous ? result.margin !== previous.margin : false;
 
   return (
     <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative w-full min-w-0 max-w-full overflow-hidden rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
@@ -2217,6 +2322,11 @@ function ResultCard({
             <StatusIcon status={statusForDisplay} />
             {!declared && <span className={`badge ${confidenceClass(confidence)}`}>{confidence}</span>}
             {leaderChanged && <span className="badge bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100">Changed</span>}
+            {integrityWarning && (
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-amber-100 text-amber-800 ring-1 ring-amber-200 dark:bg-amber-900 dark:text-amber-100 dark:ring-amber-800" title={integrityWarning} aria-label="ECI source mismatch warning">
+                <AlertTriangle className="h-3.5 w-3.5" />
+              </span>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <HistoryTooltip history={history} />
@@ -2258,7 +2368,7 @@ function ResultCard({
           />
         )}
         <div className="mt-4 grid min-w-0 grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:gap-3">
-          <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" crowned={declared} />
+          <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" crowned={declared} suppressImage={lowBandwidthMode} />
           <div className="min-w-0">
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
               <ArrowUp className="h-3.5 w-3.5" />
@@ -2269,14 +2379,14 @@ function ResultCard({
           </div>
           <div className="min-w-[72px] shrink-0 text-right">
             <div className={`text-xs font-semibold uppercase tracking-wide ${closeFight ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}`}>{veryCloseFight ? "Alert lead" : closeFight ? "Tight lead" : "Lead"}</div>
-            <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">{formatNumber(result.margin)}</div>
+            <div className={`text-lg font-black text-emerald-700 dark:text-emerald-300 ${marginChanged ? "animate-value-change" : ""}`}>{formatNumber(result.margin)}</div>
             <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Votes</div>
-            <div className="text-sm font-black text-zinc-950 dark:text-white">{formatNumber(leader?.totalVotes ?? 0)}</div>
+            <div className={`text-sm font-black text-zinc-950 dark:text-white ${leaderVotesChanged ? "animate-value-change" : ""}`}>{formatNumber(leader?.totalVotes ?? 0)}</div>
             {marginChange !== 0 && <div className="text-xs font-semibold text-zinc-500">{formatDelta(marginChange)}</div>}
           </div>
         </div>
         <div className="mt-3 flex items-center gap-2 rounded-md bg-zinc-100 px-2.5 py-2 dark:bg-zinc-900">
-          <CandidatePhoto candidateName={runnerName} photoUrl={runnerUp?.photoUrl} size="tiny" tone="trailing" />
+          <CandidatePhoto candidateName={runnerName} photoUrl={runnerUp?.photoUrl} size="tiny" tone="trailing" suppressImage={lowBandwidthMode} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
               <ArrowDown className="h-3 w-3" />
@@ -2293,7 +2403,7 @@ function ResultCard({
         <div className="mt-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
             {moreCandidates.map((candidate, index) => (
-              <CandidateMiniTooltip key={`${candidate.serialNo}-${candidate.candidateName}`} candidate={candidate} position={index + 3} />
+              <CandidateMiniTooltip key={`${candidate.serialNo}-${candidate.candidateName}`} candidate={candidate} position={index + 3} suppressImage={lowBandwidthMode} />
             ))}
           </div>
           <div className="text-right text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
@@ -2318,14 +2428,16 @@ function ResultCard({
 
 function CandidateMiniTooltip({
   candidate,
-  position
+  position,
+  suppressImage = false
 }: {
   candidate: { candidateName: string; party: string; totalVotes: number; photoUrl?: string };
   position: number;
+  suppressImage?: boolean;
 }) {
   return (
     <div className="group relative">
-      <CandidatePhoto candidateName={candidate.candidateName} photoUrl={candidate.photoUrl} size="mini" />
+      <CandidatePhoto candidateName={candidate.candidateName} photoUrl={candidate.photoUrl} size="mini" suppressImage={suppressImage} />
       <div className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-48 rounded-md border border-zinc-200 bg-white p-2 text-left shadow-lg group-hover:block group-focus-within:block dark:border-zinc-800 dark:bg-zinc-950">
         <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Position {position}</div>
         <div className="mt-1 text-xs font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
@@ -2444,13 +2556,15 @@ function CandidatePhoto({
   photoUrl,
   size,
   tone = "neutral",
-  crowned = false
+  crowned = false,
+  suppressImage = false
 }: {
   candidateName: string;
   photoUrl?: string;
   size: "large" | "small" | "tiny" | "mini";
   tone?: "leading" | "trailing" | "neutral";
   crowned?: boolean;
+  suppressImage?: boolean;
 }) {
   const classes = size === "large" ? "h-16 w-16" : size === "small" ? "h-12 w-12" : size === "tiny" ? "h-9 w-9" : "h-7 w-7";
   const toneClasses =
@@ -2467,7 +2581,7 @@ function CandidatePhoto({
         </div>
       )}
       <div className={`${classes} ${toneClasses} overflow-hidden rounded-full border-2 border-white bg-zinc-200 shadow-sm dark:border-zinc-950 dark:bg-zinc-800`}>
-        {photoUrl ? (
+        {photoUrl && !suppressImage ? (
           <img className="h-full w-full object-cover" src={photoUrl} alt={candidateName} />
         ) : (
           <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs font-black text-zinc-500">
@@ -2566,12 +2680,15 @@ function EmptyState() {
   );
 }
 
-function sortResults(results: ConstituencyResult[], selectedIds: string[], sortMode: SortMode, pinnedIds: string[]) {
+function sortResults(results: ConstituencyResult[], selectedIds: string[], sortMode: SortMode, pinnedIds: string[], attentionIds: string[] = []) {
   const selectedOrder = new Map(selectedIds.map((id, index) => [id, index]));
   const pinned = new Set(pinnedIds);
+  const attention = new Set(attentionIds);
   return [...results].sort((a, b) => {
     const pinnedDelta = Number(pinned.has(b.constituencyId)) - Number(pinned.has(a.constituencyId));
     if (pinnedDelta) return pinnedDelta;
+    const attentionDelta = Number(attention.has(b.constituencyId)) - Number(attention.has(a.constituencyId));
+    if (attentionDelta) return attentionDelta;
     if (sortMode === "marginAsc") return a.margin - b.margin;
     if (sortMode === "marginDesc") return b.margin - a.margin;
     if (sortMode === "leader") return a.leadingCandidate.localeCompare(b.leadingCandidate);
@@ -2581,6 +2698,15 @@ function sortResults(results: ConstituencyResult[], selectedIds: string[], sortM
 
 function latestDataUpdatedAt(values: number[]) {
   return Math.max(0, ...values.filter(Boolean));
+}
+
+function isOldPreviewSource(sourceConfig?: PublicSourceConfig) {
+  const sourceText = [
+    sourceConfig?.constituencyListUrl,
+    sourceConfig?.candidateDetailUrlTemplate
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (!sourceText) return true;
+  return sourceText.includes("resultacgennov2025") || sourceText.includes("acresultgenjune2024");
 }
 
 function sourceDelayInMinutes(lastUpdated: string, checkedAt?: number) {
@@ -2597,6 +2723,13 @@ function formatNumber(value: number) {
 function formatDelta(value: number) {
   if (!value) return "0";
   return `${value > 0 ? "+" : ""}${formatNumber(value)}`;
+}
+
+function formatDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes || 1}m`;
 }
 
 function raceConfidenceLabel(result: ConstituencyResult, countingPercent?: number) {

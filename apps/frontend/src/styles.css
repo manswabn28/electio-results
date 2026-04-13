@@ -212,6 +212,38 @@ button:disabled {
   animation: party-card-refresh-pulse 900ms ease-out;
 }
 
+@keyframes value-change-glow {
+  0% {
+    background-color: rgba(16, 185, 129, 0.18);
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.animate-value-change {
+  display: inline-block;
+  border-radius: 6px;
+  animation: value-change-glow 1100ms ease-out;
+}
+
+@keyframes notice-marquee {
+  0% {
+    transform: translateX(8%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-notice-marquee {
+  display: inline-block;
+  min-width: 100%;
+  animation: notice-marquee 24s linear infinite;
+}
+
 @keyframes winner-toast-in {
   0% {
     opacity: 0;
