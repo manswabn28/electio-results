@@ -129,6 +129,8 @@ export type SourceConfig = {
   constituencyListUrl: string;
   candidateDetailUrlTemplate: string;
   refreshIntervalSeconds: number;
+  hidePreviewBanner: boolean;
+  hideCountdown: boolean;
   updatedAt: string;
   updatedBy: string;
   activeProfileId?: string;
@@ -140,6 +142,8 @@ export type PublicSourceConfig = {
   constituencyListUrl: string;
   candidateDetailUrlTemplate: string;
   refreshIntervalSeconds: number;
+  hidePreviewBanner: boolean;
+  hideCountdown: boolean;
   updatedAt: string;
   updatedBy: string;
   adminEnabled: boolean;

@@ -95,7 +95,7 @@ export function apiBaseForDiagnostics() {
 
 export function updateSourceConfig(
   password: string,
-  payload: Pick<PublicSourceConfig, "baseUrl" | "constituencyListUrl" | "candidateDetailUrlTemplate" | "refreshIntervalSeconds">
+  payload: Pick<PublicSourceConfig, "baseUrl" | "constituencyListUrl" | "candidateDetailUrlTemplate" | "refreshIntervalSeconds" | "hidePreviewBanner" | "hideCountdown">
 ) {
   return request<PublicSourceConfig>(apiUrl("/api/admin/source-config"), {
     method: "PUT",

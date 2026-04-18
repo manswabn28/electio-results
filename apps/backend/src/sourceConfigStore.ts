@@ -11,6 +11,8 @@ const sourceConfigSchema = z.object({
     message: "Template must include {constituencyNumber} or {constituencyNumberPadded}."
   }),
   refreshIntervalSeconds: z.coerce.number().int().min(5).max(300),
+  hidePreviewBanner: z.boolean().optional().default(false),
+  hideCountdown: z.boolean().optional().default(false),
   updatedAt: z.string(),
   updatedBy: z.string(),
   activeProfileId: z.string().optional(),
@@ -61,6 +63,8 @@ export async function updateSourceConfig(input: {
   constituencyListUrl: string;
   candidateDetailUrlTemplate: string;
   refreshIntervalSeconds: number;
+  hidePreviewBanner?: boolean;
+  hideCountdown?: boolean;
   updatedBy?: string;
 }): Promise<SourceConfig> {
   const candidateDetailUrlTemplate = normalizeCandidateTemplate(input.candidateDetailUrlTemplate.trim());
@@ -69,6 +73,8 @@ export async function updateSourceConfig(input: {
     constituencyListUrl: input.constituencyListUrl.trim(),
     candidateDetailUrlTemplate,
     refreshIntervalSeconds: input.refreshIntervalSeconds,
+    hidePreviewBanner: Boolean(input.hidePreviewBanner),
+    hideCountdown: Boolean(input.hideCountdown),
     updatedAt: new Date().toISOString(),
     updatedBy: input.updatedBy?.trim() || "admin",
     profiles: [
@@ -206,6 +212,8 @@ function defaultSourceConfig(): SourceConfig {
     constituencyListUrl: config.ECI_CONSTITUENCY_LIST_URL,
     candidateDetailUrlTemplate: config.ECI_CANDIDATE_DETAIL_URL_TEMPLATE,
     refreshIntervalSeconds: 30,
+    hidePreviewBanner: false,
+    hideCountdown: false,
     updatedAt: new Date(0).toISOString(),
     updatedBy: "environment"
   });

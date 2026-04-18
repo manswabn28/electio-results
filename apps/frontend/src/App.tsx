@@ -133,6 +133,7 @@ export function App() {
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
   const [lostToasts, setLostToasts] = useState<LostNotification[]>([]);
   const [tightRaceToasts, setTightRaceToasts] = useState<TightRaceNotification[]>([]);
+  const [activePartyModal, setActivePartyModal] = useState<string | null>(null);
   const [seenTightRaceIds, setSeenTightRaceIds] = useLocalStorageState<string[]>("kerala-election:seen-tight-race-notifications", []);
   const pendingTightRaceToastIds = useRef<Set<string>>(new Set());
   const hydratedProfileRef = useRef("");
@@ -792,6 +793,29 @@ export function App() {
     }
     return insights;
   }, [leaderChanges, previousResults, results]);
+  const partySeatDetails = useMemo(() => {
+    const grouped = new Map<string, ConstituencySummary[]>();
+    for (const summary of allSummaryQuery.data?.results ?? []) {
+      const partyKey = partyLookupKey(summary.leadingParty?.trim() ?? "");
+      if (!partyKey) continue;
+      grouped.set(partyKey, [...(grouped.get(partyKey) ?? []), summary]);
+    }
+    for (const [party, list] of grouped.entries()) {
+      grouped.set(
+        party,
+        [...list].sort((left, right) => {
+          const declaredDelta = Number(isDeclaredWinner(right.statusText || right.roundStatus)) - Number(isDeclaredWinner(left.statusText || left.roundStatus));
+          if (declaredDelta) return declaredDelta;
+          return Number(right.margin || 0) - Number(left.margin || 0);
+        })
+      );
+    }
+    return grouped;
+  }, [allSummaryQuery.data?.results]);
+  const activePartySummaries = useMemo(() => {
+    if (!activePartyModal) return [];
+    return partySeatDetails.get(partyLookupKey(activePartyModal)) ?? [];
+  }, [activePartyModal, partySeatDetails]);
   const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds, autoAttentionIds);
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
   const lastEciChangeAt = latestDataUpdatedAt(Object.values(lastChangedAt));
@@ -990,7 +1014,7 @@ export function App() {
                 type="button"
               >
                 <Maximize2 className="h-4 w-4" />
-                ⛶
+                ?
               </button>
             </div>
           </div>
@@ -1235,7 +1259,24 @@ export function App() {
           )}
         </div>
       </section>
-      <PartySummaryDock parties={partySummaryQuery.data?.parties ?? []} checkedAt={partySummaryQuery.dataUpdatedAt} traffic={trafficQuery.data} />
+      <PartySummaryDock
+        parties={partySummaryQuery.data?.parties ?? []}
+        checkedAt={partySummaryQuery.dataUpdatedAt}
+        traffic={trafficQuery.data}
+        onPartyClick={(party) => {
+          setActivePartyModal(party);
+          trackEvent("party_summary_open", { party: shortPartyName(party) });
+        }}
+      />
+      {activePartyModal && (
+        <PartyConstituencyModal
+          party={activePartyModal}
+          summaries={activePartySummaries}
+          candidatePhotoLookup={candidatePhotoLookup}
+          suppressImage={lowBandwidthMode}
+          onClose={() => setActivePartyModal(null)}
+        />
+      )}
       {toast && (
         <div className="fixed right-4 top-4 z-[60] max-w-sm rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-lg dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100">
           {toast}
@@ -1760,7 +1801,7 @@ function CandidateWatchlist({
             >
               <CandidatePhoto candidateName={candidate.candidateName} photoUrl={candidate.photoUrl} size="mini" />
               <span className="max-w-28 truncate">{candidate.candidateName}</span>
-              <span>×</span>
+              <X className="h-3 w-3" />
             </button>
           ))}
         </div>
@@ -2016,11 +2057,12 @@ function ConstituencySelector({
               {selectedOptions.map((option) => (
                 <button
                   key={option.constituencyId}
-                  className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100"
+                  className="inline-flex items-center rounded-md bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100"
                   onClick={() => toggle(option.constituencyId)}
                   title={`Remove ${option.constituencyName}`}
                 >
-                  {option.constituencyName} ×
+                  <span className="truncate">{option.constituencyName}</span>
+                  <X className="ml-1 h-3 w-3" />
                 </button>
               ))}
             </div>
@@ -2088,6 +2130,8 @@ function SourceConfigPanel({
   const [constituencyListUrl, setConstituencyListUrl] = useState(sourceConfig?.constituencyListUrl ?? "");
   const [candidateDetailUrlTemplate, setCandidateDetailUrlTemplate] = useState(sourceConfig?.candidateDetailUrlTemplate ?? "");
   const [refreshIntervalSeconds, setRefreshIntervalSeconds] = useState(String(sourceConfig?.refreshIntervalSeconds ?? 30));
+  const [hidePreviewBanner, setHidePreviewBanner] = useState(sourceConfig?.hidePreviewBanner ?? false);
+  const [hideCountdown, setHideCountdown] = useState(sourceConfig?.hideCountdown ?? false);
 
   useEffect(() => {
     if (!sourceConfig) return;
@@ -2095,6 +2139,8 @@ function SourceConfigPanel({
     setConstituencyListUrl(sourceConfig.constituencyListUrl);
     setCandidateDetailUrlTemplate(sourceConfig.candidateDetailUrlTemplate);
     setRefreshIntervalSeconds(String(sourceConfig.refreshIntervalSeconds));
+    setHidePreviewBanner(sourceConfig.hidePreviewBanner ?? false);
+    setHideCountdown(sourceConfig.hideCountdown ?? false);
   }, [sourceConfig]);
 
   const mutation = useMutation({
@@ -2103,7 +2149,9 @@ function SourceConfigPanel({
         baseUrl,
         constituencyListUrl,
         candidateDetailUrlTemplate,
-        refreshIntervalSeconds: Number(refreshIntervalSeconds)
+        refreshIntervalSeconds: Number(refreshIntervalSeconds),
+        hidePreviewBanner,
+        hideCountdown
       }),
     onSuccess: () => {
       sessionStorage.setItem("kerala-election:admin-password", password);
@@ -2564,11 +2612,13 @@ function DeploymentReadinessPanel({
 function PartySummaryDock({
   parties,
   checkedAt,
-  traffic
+  traffic,
+  onPartyClick
 }: {
   parties: { party: string; won: number; leading: number; total: number; color?: string }[];
   checkedAt?: number;
   traffic?: { watchingNow: number; totalViews: number };
+  onPartyClick?: (party: string) => void;
 }) {
   const previousTotals = useRef<Record<string, number>>({});
   const visibleParties = parties.slice(0, 8);
@@ -2589,10 +2639,12 @@ function PartySummaryDock({
           </div>
         )}
         {visibleParties.map((party) => (
-          <div
+          <button
             key={`${party.party}-${checkedAt ?? 0}`}
-            className="animate-party-card-refresh flex min-w-36 shrink-0 items-center gap-3 rounded-md border border-black/10 px-3 py-2 text-white shadow-sm"
+            className="animate-party-card-refresh flex min-w-36 shrink-0 items-center gap-3 rounded-md border border-black/10 px-3 py-2 text-left text-white shadow-sm"
             style={{ backgroundColor: party.color ?? "#71717a" }}
+            onClick={() => onPartyClick?.(party.party)}
+            type="button"
           >
             <div className="text-3xl font-black leading-none">{formatNumber(party.total)}</div>
             <div className="min-w-0">
@@ -2603,7 +2655,7 @@ function PartySummaryDock({
                 {deltas[party.party] !== 0 && <span>{deltas[party.party] > 0 ? "+" : ""}{deltas[party.party]}</span>}
               </div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
       {traffic && (
@@ -2618,6 +2670,90 @@ function PartySummaryDock({
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+function PartyConstituencyModal({
+  party,
+  summaries,
+  candidatePhotoLookup,
+  suppressImage = false,
+  onClose
+}: {
+  party: string;
+  summaries: ConstituencySummary[];
+  candidatePhotoLookup: Map<string, string>;
+  suppressImage?: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <div
+        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Party seats</div>
+            <div className="mt-1 text-xl font-black text-zinc-950 dark:text-white">{party}</div>
+            <div className="mt-1 text-xs font-semibold text-zinc-500">{formatNumber(summaries.length)} constituencies currently leading or won</div>
+          </div>
+          <button className="btn-press rounded-md border border-zinc-300 p-2 dark:border-zinc-700" type="button" onClick={onClose} aria-label="Close party constituencies">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {summaries.length === 0 ? (
+            <div className="rounded-md border border-dashed border-zinc-300 p-8 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700">
+              No constituencies available for this party yet.
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {summaries.map((summary) => {
+                const declared = isDeclaredWinner(summary.statusText || summary.roundStatus);
+                const photoUrl = candidatePhotoLookup.get(`${summary.constituencyId}:${normalizeCandidateName(summary.leadingCandidate)}`);
+                return (
+                  <div key={summary.constituencyId} className="rounded-md border border-zinc-200 px-3 py-3 dark:border-zinc-800">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <CandidatePhoto
+                          candidateName={summary.leadingCandidate || "-"}
+                          photoUrl={photoUrl}
+                          size="small"
+                          tone="leading"
+                          crowned={declared}
+                          suppressImage={suppressImage}
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-black text-zinc-950 dark:text-white">
+                            {summary.constituencyName}
+                            <span className="ml-0 block text-xs font-semibold text-zinc-500 sm:ml-2 sm:inline">AC {summary.constituencyNumber}</span>
+                          </div>
+                          <div className="mt-1 truncate text-sm font-bold text-zinc-700 dark:text-zinc-200">
+                            {summary.leadingCandidate || "-"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 sm:block sm:shrink-0 sm:text-right">
+                        <span className={`inline-flex shrink-0 rounded-md px-2 py-1 text-[10px] font-black uppercase ${declared ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" : "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-100"}`}>
+                          {declared ? "Won" : "Leading"}
+                        </span>
+                        <div className="flex min-w-0 items-baseline justify-end gap-2 sm:mt-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Margin</div>
+                          <div className="truncate text-lg font-black text-emerald-700 dark:text-emerald-300">
+                            {formatNumber(summary.margin || 0)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3148,7 +3284,7 @@ function StatusIcon({ status }: { status: string }) {
 
   if (declared) {
     return (
-      <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-emerald-700 text-white shadow-sm ring-1 ring-emerald-800" title={title} aria-label={title}>
+      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-700 text-white shadow-sm ring-1 ring-emerald-800" title={title} aria-label={title}>
         <Check className="h-2.5 w-2.5 stroke-[4]" />
       </span>
     );
@@ -3344,6 +3480,10 @@ function shortPartyName(value: string) {
     "None of the Above": "NOTA"
   };
   return known[value] ?? value;
+}
+
+function partyLookupKey(value: string) {
+  return normalizeKeyPart(shortPartyName(value || "").trim());
 }
 
 function normalizeKeyPart(value: string) {

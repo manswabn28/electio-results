@@ -27,6 +27,8 @@ export function createApiRouter(): Router {
       constituencyListUrl: String(req.body?.constituencyListUrl ?? ""),
       candidateDetailUrlTemplate: String(req.body?.candidateDetailUrlTemplate ?? ""),
       refreshIntervalSeconds: Number(req.body?.refreshIntervalSeconds ?? 30),
+      hidePreviewBanner: Boolean(req.body?.hidePreviewBanner),
+      hideCountdown: Boolean(req.body?.hideCountdown),
       updatedBy: "admin"
     });
     clearElectionCache();
