@@ -3,6 +3,7 @@ import express from "express";
 import { clearElectionCache, getCandidateIndex, getConstituencies, getConstituencyResult, getConstituencyResults, getPartySummary, getSourceDiagnostics, getSummary } from "./eci/service.js";
 import { applyDiscoveredSource, getDiscoveryStatus, runSourceDiscovery, setDiscoveryScheduleEnabled } from "./eci/discovery.js";
 import { getSourceConfig, revertSourceConfig, setActiveSourceProfile, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
+import { addChatMessage, deleteChatMessage, getChatMessages, subscribeToChat } from "./chatStore.js";
 import { recordViewer } from "./traffic.js";
 
 export function createApiRouter(): Router {
@@ -93,6 +94,58 @@ export function createApiRouter(): Router {
 
   router.post("/traffic/heartbeat", asyncHandler(async (req, res) => {
     res.json(recordViewer(String(req.body?.viewerId ?? "")));
+  }));
+
+  router.get("/chat/messages", asyncHandler(async (req, res) => {
+    const limit = Number(req.query.limit ?? 120);
+    res.json(await getChatMessages(Number.isFinite(limit) ? limit : 120));
+  }));
+
+  router.get("/chat/stream", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    const send = (payload: unknown) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    send({ type: "ready", generatedAt: new Date().toISOString() });
+
+    const unsubscribe = subscribeToChat((message) => {
+      send({ type: "message", message });
+    });
+
+    const heartbeat = setInterval(() => {
+      res.write(": keep-alive\n\n");
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      res.end();
+    });
+  });
+
+  router.post("/chat/messages", asyncHandler(async (req, res) => {
+    const message = await addChatMessage({
+      viewerId: String(req.body?.viewerId ?? ""),
+      displayName: String(req.body?.displayName ?? ""),
+      message: String(req.body?.message ?? "")
+    });
+    res.status(201).json({
+      generatedAt: new Date().toISOString(),
+      data: message
+    });
+  }));
+
+  router.delete("/admin/chat/messages/:messageId", requireAdmin, asyncHandler(async (req, res) => {
+    const message = await deleteChatMessage(String(req.params.messageId ?? ""));
+    res.json({
+      generatedAt: new Date().toISOString(),
+      data: message
+    });
   }));
 
   router.get("/results/:constituencyId", asyncHandler(async (req, res) => {

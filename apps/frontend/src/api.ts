@@ -1,4 +1,6 @@
 import type {
+  ChatMessage,
+  ChatMessagesResponse,
   CandidatesResponse,
   ConstituenciesResponse,
   ConstituencyResult,
@@ -89,8 +91,33 @@ export function sendTrafficHeartbeat(viewerId: string) {
   });
 }
 
+export function fetchChatMessages(limit = 120) {
+  return request<ChatMessagesResponse>(apiUrl(`/api/chat/messages?limit=${encodeURIComponent(String(limit))}`));
+}
+
+export async function postChatMessage(payload: { viewerId: string; displayName?: string; message: string }) {
+  const envelope = await request<ResultEnvelope<ChatMessage>>(apiUrl("/api/chat/messages"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return envelope.data;
+}
+
+export async function deleteChatMessage(password: string, messageId: string) {
+  const envelope = await request<ResultEnvelope<ChatMessage>>(apiUrl(`/api/admin/chat/messages/${encodeURIComponent(messageId)}`), {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${password}` }
+  });
+  return envelope.data;
+}
+
 export function apiBaseForDiagnostics() {
   return apiBaseUrl || "same-origin";
+}
+
+export function chatStreamUrl() {
+  return apiUrl("/api/chat/stream");
 }
 
 export function updateSourceConfig(

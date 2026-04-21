@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, applyDiscoveredSource, fetchCandidates, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
+import EmojiPicker, { Theme } from "emoji-picker-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, MessageCircle, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
+import type { CandidateOption, ChatMessage, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
+import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -123,6 +124,9 @@ export function App() {
   const [seenWinnerIds, setSeenWinnerIds] = useLocalStorageState<string[]>("kerala-election:seen-winner-notifications", []);
   const [seenLostIds, setSeenLostIds] = useLocalStorageState<string[]>("kerala-election:seen-lost-notifications", []);
   const [viewerId] = useLocalStorageState<string>(VIEWER_ID_STORAGE_KEY, () => crypto.randomUUID());
+  const [chatDisplayName, setChatDisplayName] = useLocalStorageState<string>("kerala-election:chat-display-name", "");
+  const [chatOpen, setChatOpen] = useLocalStorageState<boolean>("kerala-election:chat-open", false);
+  const [lastSeenChatAt, setLastSeenChatAt] = useLocalStorageState<string>("kerala-election:last-seen-chat-at", "");
   const [liveAudioStarted, setLiveAudioStarted] = useLocalStorageState<boolean>("kerala-election:live-audio-started", false);
   const [liveAudioExpanded, setLiveAudioExpanded] = useLocalStorageState<boolean>("kerala-election:live-audio-expanded", false);
   const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
@@ -406,6 +410,24 @@ export function App() {
     queryFn: () => fetchPartySummary(effectiveProfileId),
     refetchInterval: refreshMs
   });
+  const chatMessagesQuery = useQuery({
+    queryKey: ["chat-messages"],
+    queryFn: () => fetchChatMessages(120),
+    staleTime: Infinity
+  });
+  const chatPostMutation = useMutation({
+    mutationFn: (payload: { viewerId: string; displayName?: string; message: string }) => postChatMessage(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+    }
+  });
+  const chatDeleteMutation = useMutation({
+    mutationFn: ({ password, messageId }: { password: string; messageId: string }) => deleteChatMessage(password, messageId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+    }
+  });
+  const [liveChatMessages, setLiveChatMessages] = useState<ChatMessage[]>([]);
 
   const detailResultsQuery = useQuery({
     queryKey: ["results", "details", effectiveProfileId, selectedIds],
@@ -453,6 +475,14 @@ export function App() {
       return [id, "Fresh"] as const;
     }));
   }, [checkedAtById, lastCheckedById, liveResults, refreshMs, selectedIds]);
+  const latestChatAt = useMemo(
+    () => liveChatMessages.reduce((latest, message) => message.createdAt > latest ? message.createdAt : latest, ""),
+    [liveChatMessages]
+  );
+  const unreadChatCount = useMemo(
+    () => liveChatMessages.filter((message) => !message.deleted && message.createdAt > lastSeenChatAt).length,
+    [lastSeenChatAt, liveChatMessages]
+  );
   const results = useMemo(() => {
     const liveById = new Map(liveResults.map((result) => [result.constituencyId, result]));
     return selectedIds
@@ -470,6 +500,47 @@ export function App() {
   useEffect(() => {
     if (soundEnabled && alertRules.leaderChange && leaderChanges.length) playLeaderAlert();
   }, [alertRules.leaderChange, leaderChanges.length, soundEnabled]);
+
+  useEffect(() => {
+    const initialMessages = chatMessagesQuery.data?.messages;
+    if (!initialMessages) return;
+    setLiveChatMessages((current) => {
+      if (!current.length) return initialMessages;
+      const merged = new Map(current.map((message) => [message.id, message]));
+      for (const message of initialMessages) merged.set(message.id, message);
+      return [...merged.values()]
+        .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+        .slice(-120);
+    });
+  }, [chatMessagesQuery.data?.messages]);
+
+  useEffect(() => {
+    if (chatOpen && latestChatAt) setLastSeenChatAt(latestChatAt);
+  }, [chatOpen, latestChatAt, setLastSeenChatAt]);
+
+  useEffect(() => {
+    const stream = new EventSource(chatStreamUrl());
+    stream.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { type?: string; message?: ChatMessage };
+        if (payload.type !== "message" || !payload.message) return;
+        const nextMessage = payload.message;
+        setLiveChatMessages((current) => {
+          const merged = new Map(current.map((message) => [message.id, message]));
+          merged.set(nextMessage.id, nextMessage);
+          return [...merged.values()]
+            .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+            .slice(-120);
+        });
+      } catch {
+        // Ignore malformed stream payloads and wait for the next event.
+      }
+    };
+    stream.onerror = () => {
+      if (stream.readyState === EventSource.CLOSED) stream.close();
+    };
+    return () => stream.close();
+  }, []);
 
   useEffect(() => {
     if (!liveResults.length) return;
@@ -826,7 +897,10 @@ export function App() {
       : lastEciChangeAt
         ? `Changed ${new Date(lastEciChangeAt).toLocaleTimeString()}`
         : "ECI OK";
-  const showOldResultNotice = Date.now() < Date.parse(KERALA_COUNTING_START_AT) && isOldPreviewSource(sourceConfigQuery.data, activeProfile);
+  const preElectionWindowActive = Date.now() < Date.parse(KERALA_COUNTING_START_AT) && isOldPreviewSource(sourceConfigQuery.data, activeProfile);
+  const showOldResultNotice = preElectionWindowActive && !sourceConfigQuery.data?.hidePreviewBanner;
+  const showCountingCountdown = preElectionWindowActive && !sourceConfigQuery.data?.hideCountdown;
+  const adminSessionPassword = typeof window !== "undefined" ? sessionStorage.getItem("kerala-election:admin-password") ?? "" : "";
   const enterWatchMode = () => {
     trackEvent("watch_mode_enter", { selected_count: selectedIds.length });
     setWatchMode(true);
@@ -836,6 +910,18 @@ export function App() {
     trackEvent("watch_mode_exit", { selected_count: selectedIds.length });
     setWatchMode(false);
     if (document.fullscreenElement) void document.exitFullscreen();
+  };
+  const activateSelectionPanel = () => {
+    if (watchMode) exitWatchMode();
+    if (sidebarCollapsed) setSidebarCollapsed(false);
+    trackEvent("empty_state_activate");
+    window.setTimeout(() => {
+      const selector = document.querySelector<HTMLInputElement>('input[aria-label="Quick add seat or candidate"]')
+        ?? document.querySelector<HTMLInputElement>('input[placeholder="Search constituency"]')
+        ?? document.querySelector<HTMLInputElement>('input[placeholder="Search candidate"]');
+      selector?.focus();
+      selector?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
   };
   const togglePinned = (id: string) => {
     trackEvent("constituency_pin_toggle", { constituency_id: id, pinned: !pinnedIds.includes(id) });
@@ -940,7 +1026,9 @@ export function App() {
 
   return (
     <main className="min-h-screen max-w-full overflow-x-hidden">
-      {showOldResultNotice && <OldResultNotice />}
+      {(showOldResultNotice || showCountingCountdown) && (
+        <OldResultNotice showBanner={showOldResultNotice} showCountdown={showCountingCountdown} />
+      )}
       {!watchMode && <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-4 px-4 py-3 sm:gap-6 sm:px-6 sm:py-5 lg:px-8">
           <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -1100,7 +1188,7 @@ export function App() {
             className={watchMode ? "grid min-w-0 content-start gap-4" : "order-1 grid min-w-0 content-start gap-4 lg:col-start-2 lg:row-span-2 lg:row-start-1"}
             style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${watchMode ? "360px" : "300px"}), 1fr))` }}
           >
-            {selectedIds.length === 0 && <EmptyState />}
+            {selectedIds.length === 0 && <EmptyState onActivate={activateSelectionPanel} />}
             {selectedOptions.map((option, index) => {
               const query = resultQueries[index];
               const result = query?.data;
@@ -1263,10 +1351,34 @@ export function App() {
         parties={partySummaryQuery.data?.parties ?? []}
         checkedAt={partySummaryQuery.dataUpdatedAt}
         traffic={trafficQuery.data}
+        chatOpen={chatOpen}
+        chatUnreadCount={unreadChatCount}
+        onChatClick={() => setChatOpen((current) => !current)}
         onPartyClick={(party) => {
           setActivePartyModal(party);
           trackEvent("party_summary_open", { party: shortPartyName(party) });
         }}
+      />
+      <CommunityChatPanel
+        open={chatOpen}
+        onOpenChange={setChatOpen}
+        messages={liveChatMessages}
+        unreadCount={unreadChatCount}
+        darkMode={darkMode}
+        displayName={chatDisplayName}
+        onDisplayNameChange={setChatDisplayName}
+        onSend={(message) => chatPostMutation.mutateAsync({
+          viewerId,
+          displayName: chatDisplayName,
+          message
+        })}
+        onDelete={(messageId) => chatDeleteMutation.mutateAsync({ password: adminSessionPassword, messageId })}
+        isLoading={chatMessagesQuery.isLoading && liveChatMessages.length === 0}
+        isSending={chatPostMutation.isPending}
+        isDeleting={chatDeleteMutation.isPending}
+        sendError={chatPostMutation.error instanceof Error ? chatPostMutation.error.message : undefined}
+        deleteError={chatDeleteMutation.error instanceof Error ? chatDeleteMutation.error.message : undefined}
+        canModerate={adminSessionPassword === ADMIN_PASSWORD}
       />
       {activePartyModal && (
         <PartyConstituencyModal
@@ -1348,7 +1460,7 @@ function DashboardMetrics({
   );
 }
 
-function OldResultNotice() {
+function OldResultNotice({ showBanner, showCountdown }: { showBanner: boolean; showCountdown: boolean }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -1357,16 +1469,18 @@ function OldResultNotice() {
 
   const startsAt = new Date(KERALA_COUNTING_START_AT);
   const remainingMs = startsAt.getTime() - now;
-  if (remainingMs <= 0) return null;
+  if (remainingMs <= 0 || (!showBanner && !showCountdown)) return null;
 
   return (
     <>
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-[90] overflow-hidden border-b border-amber-300 bg-amber-50/95 text-amber-950 shadow-sm backdrop-blur dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100" role="status" aria-live="polite">
-        <div className="animate-notice-marquee whitespace-nowrap px-3 py-1.5 text-[11px] font-bold sm:text-xs">
-          Current preview uses old Bihar Assembly Election 2025 result data from ECI. Kerala Assembly Election 2026 live results will appear here after counting starts on {startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })} IST.
+      {showBanner && (
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-[90] overflow-hidden border-b border-amber-300 bg-amber-50/95 text-amber-950 shadow-sm backdrop-blur dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100" role="status" aria-live="polite">
+          <div className="animate-notice-marquee whitespace-nowrap px-3 py-1.5 text-[11px] font-bold sm:text-xs">
+            Current preview uses old Bihar Assembly Election 2025 result data from ECI. Kerala Assembly Election 2026 live results will appear here after counting starts on {startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })} IST.
+          </div>
         </div>
-      </div>
-      <CountingCountdown remainingMs={remainingMs} />
+      )}
+      {showCountdown && <CountingCountdown remainingMs={remainingMs} />}
     </>
   );
 }
@@ -1782,7 +1896,7 @@ function CandidateWatchlist({
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
                   <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
-                    {shortPartyName(candidate.party)} · {candidate.constituencyName} ({candidate.constituencyNumber})
+                    {shortPartyName(candidate.party)} Â· {candidate.constituencyName} ({candidate.constituencyNumber})
                   </div>
                 </div>
               </div>
@@ -1927,7 +2041,7 @@ function WatchProfiles({
 function DiagnosticsMini({ total, fresh, cached, stale, failed }: { total: number; fresh: number; cached: number; stale: number; failed: number }) {
   return (
     <div className="mt-3 rounded-md border border-zinc-200 px-2 py-1.5 text-[10px] font-bold text-zinc-500 dark:border-zinc-800" title="Fetched / cached / stale / failed cards">
-      Data {fresh}/{total} fresh · {cached} cached · {stale} stale · {failed} failed
+      Data {fresh}/{total} fresh Â· {cached} cached Â· {stale} stale Â· {failed} failed
     </div>
   );
 }
@@ -1954,6 +2068,218 @@ function WhatChangedPanel({ insights, lastCheckedAt }: { insights: ChangeInsight
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function CommunityChatPanel({
+  open,
+  onOpenChange,
+  messages,
+  unreadCount,
+  darkMode,
+  displayName,
+  onDisplayNameChange,
+  onSend,
+  onDelete,
+  isLoading,
+  isSending,
+  isDeleting,
+  sendError,
+  deleteError,
+  canModerate
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  messages: ChatMessage[];
+  unreadCount: number;
+  darkMode: boolean;
+  displayName: string;
+  onDisplayNameChange: (value: string) => void;
+  onSend: (message: string) => Promise<unknown>;
+  onDelete: (messageId: string) => Promise<unknown>;
+  isLoading: boolean;
+  isSending: boolean;
+  isDeleting: boolean;
+  sendError?: string;
+  deleteError?: string;
+  canModerate: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const emojiPickerWidth = typeof window !== "undefined" && window.innerWidth < 640
+    ? Math.max(280, Math.min(window.innerWidth - 16, 420))
+    : 320;
+
+  useEffect(() => {
+    if (!open) return;
+    const element = listRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [messages, open]);
+
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!composerRef.current?.contains(event.target as Node)) setEmojiOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [emojiOpen]);
+
+  useEffect(() => {
+    if (!open) setEmojiOpen(false);
+  }, [open]);
+
+  const submit = async () => {
+    const message = draft.trim();
+    if (!message || isSending) return;
+    await onSend(message);
+    setDraft("");
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submit();
+    }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setDraft((current) => `${current}${emoji}`);
+      setEmojiOpen(false);
+      return;
+    }
+    const start = textarea.selectionStart ?? draft.length;
+    const end = textarea.selectionEnd ?? draft.length;
+    const nextValue = `${draft.slice(0, start)}${emoji}${draft.slice(end)}`;
+    setDraft(nextValue);
+    setEmojiOpen(false);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const position = start + emoji.length;
+      textarea.setSelectionRange(position, position);
+    });
+  };
+
+  return (
+    <div className="pointer-events-none fixed bottom-24 left-2 right-2 z-[85] flex w-auto justify-end sm:bottom-20 sm:left-auto sm:right-4 sm:w-full sm:max-w-sm">
+      {open && (
+        <div className="pointer-events-auto w-full overflow-hidden rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-black text-zinc-950 dark:text-white">Community chat</h2>
+              <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">
+                {formatNumber(messages.filter((message) => !message.deleted).length)} messages
+                {unreadCount > 0 ? ` · ${formatNumber(unreadCount)} new` : ""}
+              </div>
+            </div>
+            <button className="btn-press rounded-md border border-zinc-300 p-1.5 dark:border-zinc-700" onClick={() => onOpenChange(false)} type="button" aria-label="Minimize chat">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="p-3">
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-wide text-zinc-500" htmlFor="chat-display-name">Name</label>
+              <input
+                id="chat-display-name"
+                className="mt-1 h-8 w-full rounded-full border border-zinc-300 bg-white px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                maxLength={40}
+                placeholder="Anonymous"
+                value={displayName}
+                onChange={(event) => onDisplayNameChange(event.target.value)}
+              />
+            </div>
+            <div ref={listRef} className="mt-3 max-h-72 space-y-2 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+              {isLoading && <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-zinc-500 dark:bg-zinc-950">Loading chat...</div>}
+              {!isLoading && messages.length === 0 && (
+                <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-zinc-500 dark:bg-zinc-950">
+                  No messages yet. Start the room.
+                </div>
+              )}
+              {messages.map((message) => (
+                <div key={message.id} className="rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-zinc-950">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-zinc-950 dark:text-white">{message.displayName || "Anonymous"}</div>
+                      <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">{new Date(message.createdAt).toLocaleString()}</div>
+                    </div>
+                    {canModerate && !message.deleted && (
+                      <button
+                        className="btn-press rounded-md border border-rose-200 px-2 py-1 text-[10px] font-black uppercase text-rose-700 dark:border-rose-900 dark:text-rose-300"
+                        onClick={() => void onDelete(message.id)}
+                        disabled={isDeleting}
+                        type="button"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                  <div className={`mt-2 whitespace-pre-wrap break-words ${message.deleted ? "italic text-zinc-400" : "text-zinc-700 dark:text-zinc-200"}`}>{message.message}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3">
+              <label className="sr-only" htmlFor="chat-message">Message</label>
+              <div ref={composerRef} className="relative">
+                {emojiOpen && (
+                  <div className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950 sm:right-auto">
+                    <EmojiPicker
+                      onEmojiClick={(emojiData) => insertEmoji(emojiData.emoji)}
+                      lazyLoadEmojis
+                      searchDisabled={false}
+                      skinTonesDisabled={false}
+                      previewConfig={{ showPreview: false }}
+                      width={emojiPickerWidth}
+                      height={380}
+                      theme={darkMode ? Theme.DARK : Theme.LIGHT}
+                    />
+                  </div>
+                )}
+              <div className="flex items-end gap-2 rounded-full border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900">
+                <button
+                  className="btn-press inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  type="button"
+                  title="Open emoji picker"
+                  aria-label="Open emoji picker"
+                  onClick={() => setEmojiOpen((current) => !current)}
+                >
+                  <span className="text-lg leading-none">🙂</span>
+                </button>
+                <textarea
+                  id="chat-message"
+                  ref={textareaRef}
+                  className="max-h-24 min-h-[30px] flex-1 resize-none bg-transparent px-1 py-0.5 text-sm leading-5 outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
+                  maxLength={400}
+                  placeholder="Type a message"
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={handleComposerKeyDown}
+                  rows={1}
+                />
+                <button
+                  className="btn-press-dark inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
+                  onClick={() => void submit()}
+                  disabled={!draft.trim() || isSending}
+                  type="button"
+                  title={isSending ? "Sending..." : "Send message"}
+                  aria-label={isSending ? "Sending..." : "Send message"}
+                >
+                  <ArrowUp className="h-4 w-4" />
+                </button>
+              </div>
+              </div>
+              <div className="mt-1 px-1 text-[10px] font-semibold text-zinc-500">Anonymous if name is blank.</div>
+            </div>
+            {(sendError || deleteError) && <div className="mt-2 text-xs text-rose-600">{sendError || deleteError}</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2333,6 +2659,32 @@ function SourceConfigPanel({
             value={refreshIntervalSeconds}
             onChange={(event) => setRefreshIntervalSeconds(event.target.value.replace(/\D/g, ""))}
           />
+          <div className="grid gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <label className="flex items-start gap-3 text-sm text-zinc-700 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                checked={hideCountdown}
+                onChange={(event) => setHideCountdown(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded accent-emerald-700"
+              />
+              <span>
+                <span className="block font-semibold">Hide top-right countdown</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400">Turns off the pre-election countdown badge until counting day.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 text-sm text-zinc-700 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                checked={hidePreviewBanner}
+                onChange={(event) => setHidePreviewBanner(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded accent-emerald-700"
+              />
+              <span>
+                <span className="block font-semibold">Hide top scrolling banner</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400">Turns off the pre-election old-results notice banner.</span>
+              </span>
+            </label>
+          </div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500" htmlFor="admin-password">Admin password</label>
           <input
             id="admin-password"
@@ -2424,10 +2776,10 @@ function SourceDiscoveryAdmin({
       <div className="mt-2 text-[11px] leading-4 text-zinc-500">
         {status?.message ?? "Backend discovery will scan official ECI result links, build available assembly profiles, and validate candidate pages before applying."}
       </div>
-      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} · Confidence {status.confidence}%</div>}
+      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} Â· Confidence {status.confidence}%</div>}
       {status?.constituencyListUrl && (
         <div className="mt-2 truncate text-[10px] text-zinc-500" title={status.constituencyListUrl}>
-          Found: {status.constituencyCount ?? 0} seats · {status.sampleVerified ? "details verified" : "details pending"}
+          Found: {status.constituencyCount ?? 0} seats Â· {status.sampleVerified ? "details verified" : "details pending"}
         </div>
       )}
       {status?.checkedAt && (
@@ -2438,7 +2790,7 @@ function SourceDiscoveryAdmin({
             ["Samples", Boolean(status.sampleVerified)]
           ].map(([label, ok]) => (
             <div key={String(label)} className={`rounded-md px-2 py-1 text-center text-[10px] font-black ${ok ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"}`}>
-              {ok ? "OK" : "Wait"} · {label}
+              {ok ? "OK" : "Wait"} Â· {label}
             </div>
           ))}
         </div>
@@ -2447,7 +2799,7 @@ function SourceDiscoveryAdmin({
         <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-[10px] leading-4 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
           <div className="font-black uppercase tracking-wide">Auto-apply report</div>
           <div>Applied: {status.appliedAt ? new Date(status.appliedAt).toLocaleString() : "-"}</div>
-          <div>Confidence: {status.confidence}% · Seats: {status.constituencyCount ?? 0} · Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
+          <div>Confidence: {status.confidence}% Â· Seats: {status.constituencyCount ?? 0} Â· Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
           <div className="mt-1 truncate" title={status.constituencyListUrl}>List: {status.constituencyListUrl}</div>
           <div className="truncate" title={status.candidateDetailUrlTemplate}>Detail: {status.candidateDetailUrlTemplate}</div>
           {status.partySummaryUrl && <div className="truncate" title={status.partySummaryUrl}>Summary: {status.partySummaryUrl}</div>}
@@ -2545,7 +2897,7 @@ function DiscoveryTrailDialog({
                     <div className="mt-1 truncate" title={profile.constituencyListUrl}>Constituencies: {profile.constituencyListUrl}</div>
                     <div className="truncate" title={profile.candidateDetailUrlTemplate}>Candidates: {profile.candidateDetailUrlTemplate}</div>
                     {profile.partySummaryUrl && <div className="truncate" title={profile.partySummaryUrl}>Summary: {profile.partySummaryUrl}</div>}
-                    <div className="mt-1">Seats {profile.constituencyCount} · Confidence {profile.confidence}% · {profile.sampleVerified ? "verified" : "needs review"}</div>
+                    <div className="mt-1">Seats {profile.constituencyCount} Â· Confidence {profile.confidence}% Â· {profile.sampleVerified ? "verified" : "needs review"}</div>
                   </div>
                 ))}
               </div>
@@ -2588,7 +2940,7 @@ function DeploymentReadinessPanel({
         <div>
           <div className="text-xs font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-300">Deployment readiness</div>
           <div className="mt-1 text-[11px] font-semibold text-zinc-500">
-            API {apiBaseForDiagnostics()} · TTL {diagnostics?.cacheTtlSeconds ?? "-"}s · Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
+            API {apiBaseForDiagnostics()} Â· TTL {diagnostics?.cacheTtlSeconds ?? "-"}s Â· Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
           </div>
         </div>
         <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onRun} disabled={isLoading} type="button">
@@ -2613,11 +2965,17 @@ function PartySummaryDock({
   parties,
   checkedAt,
   traffic,
+  chatOpen,
+  chatUnreadCount,
+  onChatClick,
   onPartyClick
 }: {
   parties: { party: string; won: number; leading: number; total: number; color?: string }[];
   checkedAt?: number;
   traffic?: { watchingNow: number; totalViews: number };
+  chatOpen?: boolean;
+  chatUnreadCount?: number;
+  onChatClick?: () => void;
   onPartyClick?: (party: string) => void;
 }) {
   const previousTotals = useRef<Record<string, number>>({});
@@ -2659,13 +3017,27 @@ function PartySummaryDock({
         ))}
       </div>
       {traffic && (
-        <div className="absolute bottom-2 right-3 flex items-center gap-3 rounded-md border border-zinc-200 bg-white/95 px-3 py-2 text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/95 dark:text-zinc-300">
-          <span className="inline-flex items-center gap-1 text-xs font-black" title="Watching now">
-            <Users className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-300" />
+        <div className="absolute bottom-2 right-3 flex items-center gap-1.5 rounded-md border border-zinc-200/60 bg-white/65 px-1.5 py-0.5 text-zinc-600 shadow-[0_4px_18px_rgba(15,23,42,0.08)] backdrop-blur-sm dark:border-zinc-700/50 dark:bg-zinc-950/55 dark:text-zinc-300">
+          <button
+            className={`btn-press relative inline-flex h-6 w-6 items-center justify-center rounded-full border p-0 transition ${chatOpen ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300" : "border-zinc-300 bg-white text-zinc-700 hover:border-emerald-300 hover:text-emerald-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:border-emerald-800 dark:hover:text-emerald-300"}`}
+            onClick={onChatClick}
+            title="Open community chat"
+            aria-label="Open community chat"
+            type="button"
+          >
+            <MessageCircle className="h-3 w-3" />
+            {(chatUnreadCount ?? 0) > 0 && (
+              <span className="absolute -right-1 -top-1 min-w-[1rem] rounded-full bg-rose-500 px-1 text-[9px] font-black leading-4 text-white">
+                {(chatUnreadCount ?? 0) > 9 ? "9+" : chatUnreadCount}
+              </span>
+            )}
+          </button>
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-black" title="Watching now">
+            <Users className="h-3 w-3 text-emerald-700 dark:text-emerald-300" />
             {formatNumber(traffic.watchingNow)}
           </span>
-          <span className="inline-flex items-center gap-1 text-xs font-black" title="Total views">
-            <Eye className="h-3.5 w-3.5 text-sky-700 dark:text-sky-300" />
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-black" title="Total views">
+            <Eye className="h-3 w-3 text-sky-700 dark:text-sky-300" />
             {formatNumber(traffic.totalViews)}
           </span>
         </div>
@@ -2916,7 +3288,7 @@ function ResultCard({
         <div className="relative h-4 overflow-hidden rounded-b-md bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
           <div className="h-full bg-gradient-to-r from-emerald-700 via-teal-500 to-sky-500" style={{ width: `${countingPercent}%` }} />
           <div className="absolute inset-0 flex items-center justify-center text-[10px] font-normal text-white">
-            Counting: {countingPercent}% · R{roundProgress.current}/{roundProgress.total}
+            Counting: {countingPercent}% Â· R{roundProgress.current}/{roundProgress.total}
           </div>
         </div>
       )}
@@ -3078,7 +3450,7 @@ function TimelinePlayback({
               <div className="text-[10px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Replay point</div>
               <div className="mt-2 text-2xl font-black text-zinc-950 dark:text-white">{active.leader}</div>
               <div className="mt-1 text-sm font-bold text-zinc-600 dark:text-zinc-300">{shortPartyName(active.party)} leads by {formatNumber(active.margin)}</div>
-              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} · {new Date(active.at).toLocaleTimeString()}</div>
+              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} Â· {new Date(active.at).toLocaleTimeString()}</div>
             </div>
           ) : (
             <div className="rounded-md border border-dashed border-zinc-300 p-6 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700">
@@ -3305,12 +3677,16 @@ function StatusIcon({ status }: { status: string }) {
   );
 }
 
-function EmptyState() {
+function EmptyState({ onActivate }: { onActivate: () => void }) {
   return (
-    <div className="rounded-md border border-dashed border-zinc-300 p-10 text-center dark:border-zinc-700">
+    <button
+      className="w-full rounded-md border border-dashed border-zinc-300 p-10 text-center transition hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/20"
+      onClick={onActivate}
+      type="button"
+    >
       <h2 className="text-xl font-bold">Choose constituencies or candidates to start tracking.</h2>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Your watched seats and candidates stay saved in this browser.</p>
-    </div>
+    </button>
   );
 }
 

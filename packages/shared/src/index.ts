@@ -225,3 +225,17 @@ export type TrafficResponse = {
   watchingNow: number;
   totalViews: number;
 };
+
+export type ChatMessage = {
+  id: string;
+  viewerId: string;
+  displayName: string;
+  message: string;
+  createdAt: string;
+  deleted?: boolean;
+};
+
+export type ChatMessagesResponse = {
+  generatedAt: string;
+  messages: ChatMessage[];
+};

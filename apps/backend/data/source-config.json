@@ -5,7 +5,7 @@
   "refreshIntervalSeconds": 10,
   "hidePreviewBanner": true,
   "hideCountdown": true,
-  "updatedAt": "2026-04-18T19:49:05.057Z",
+  "updatedAt": "2026-04-21T17:51:47.779Z",
   "updatedBy": "admin",
   "activeProfileId": "bihar-resultacgennov2025",
   "profiles": [
@@ -20,7 +20,7 @@
       "confidence": 100,
       "sampleVerified": true,
       "enabled": true,
-      "updatedAt": "2026-04-18T19:49:05.058Z"
+      "updatedAt": "2026-04-21T17:51:47.780Z"
     }
   ]
 }
