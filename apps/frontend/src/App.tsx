@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRig
 import type { CandidateOption, ChatMessage, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
 import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
-import { playChatMessageAlert, playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
+import { playChatMessageAlert, playLeaderAlert, primeAudioAlerts, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
 import { applySeo } from "./seo";
 
@@ -1097,7 +1097,14 @@ export function App() {
                 {darkMode ? <Sun className="mr-2 inline h-4 w-4" /> : <Moon className="mr-2 inline h-4 w-4" />}
                 {darkMode ? "Light" : "Dark"}
               </button>
-              <button className="btn-press inline-flex w-full items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700 sm:w-auto" onClick={() => setSoundEnabled(!soundEnabled)}>
+              <button
+                className="btn-press inline-flex w-full items-center justify-center rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700 sm:w-auto"
+                onClick={() => {
+                  const next = !soundEnabled;
+                  setSoundEnabled(next);
+                  if (next) void primeAudioAlerts();
+                }}
+              >
                 <Bell className="mr-2 inline h-4 w-4" />
                 Alerts {soundEnabled ? "On" : "Off"}
               </button>

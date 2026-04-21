@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+let sharedAudioContext: AudioContext | undefined;
+
 export function useLocalStorageState<T>(key: string, fallback: T | (() => T)) {
   const [value, setValue] = useState<T>(() => {
     const stored = localStorage.getItem(key);
@@ -50,10 +52,28 @@ export function usePreviousMap<T extends { constituencyId: string }>(items: T[])
   return snapshot;
 }
 
-export function playLeaderAlert() {
+export async function primeAudioAlerts() {
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextCtor) return;
-  const context = new AudioContextCtor();
+  sharedAudioContext ??= new AudioContextCtor();
+  if (sharedAudioContext.state === "suspended") {
+    await sharedAudioContext.resume().catch(() => undefined);
+  }
+}
+
+function getAudioContext() {
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) return undefined;
+  sharedAudioContext ??= new AudioContextCtor();
+  if (sharedAudioContext.state === "suspended") {
+    void sharedAudioContext.resume().catch(() => undefined);
+  }
+  return sharedAudioContext;
+}
+
+export function playLeaderAlert() {
+  const context = getAudioContext();
+  if (!context) return;
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "sine";
@@ -67,20 +87,19 @@ export function playLeaderAlert() {
 }
 
 export function playChatMessageAlert() {
-  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextCtor) return;
-  const context = new AudioContextCtor();
+  const context = getAudioContext();
+  if (!context) return;
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "triangle";
-  oscillator.frequency.setValueAtTime(660, context.currentTime);
-  oscillator.frequency.exponentialRampToValueAtTime(880, context.currentTime + 0.08);
+  oscillator.frequency.setValueAtTime(720, context.currentTime);
+  oscillator.frequency.exponentialRampToValueAtTime(980, context.currentTime + 0.1);
   gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.035, context.currentTime + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+  gain.gain.exponentialRampToValueAtTime(0.06, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.28);
   oscillator.connect(gain).connect(context.destination);
   oscillator.start();
-  oscillator.stop(context.currentTime + 0.24);
+  oscillator.stop(context.currentTime + 0.3);
 }
 
 declare global {
