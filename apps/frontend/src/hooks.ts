@@ -66,6 +66,23 @@ export function playLeaderAlert() {
   oscillator.stop(context.currentTime + 0.3);
 }
 
+export function playChatMessageAlert() {
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) return;
+  const context = new AudioContextCtor();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "triangle";
+  oscillator.frequency.setValueAtTime(660, context.currentTime);
+  oscillator.frequency.exponentialRampToValueAtTime(880, context.currentTime + 0.08);
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.035, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.24);
+}
+
 declare global {
   interface Window {
     webkitAudioContext?: typeof AudioContext;

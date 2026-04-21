@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRig
 import type { CandidateOption, ChatMessage, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
 import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
-import { playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
+import { playChatMessageAlert, playLeaderAlert, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
 import { applySeo } from "./seo";
 
@@ -141,6 +141,7 @@ export function App() {
   const [seenTightRaceIds, setSeenTightRaceIds] = useLocalStorageState<string[]>("kerala-election:seen-tight-race-notifications", []);
   const pendingTightRaceToastIds = useRef<Set<string>>(new Set());
   const hydratedProfileRef = useRef("");
+  const seenChatMessageIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -504,6 +505,9 @@ export function App() {
   useEffect(() => {
     const initialMessages = chatMessagesQuery.data?.messages;
     if (!initialMessages) return;
+    if (seenChatMessageIdsRef.current.size === 0) {
+      seenChatMessageIdsRef.current = new Set(initialMessages.map((message) => message.id));
+    }
     setLiveChatMessages((current) => {
       if (!current.length) return initialMessages;
       const merged = new Map(current.map((message) => [message.id, message]));
@@ -525,6 +529,8 @@ export function App() {
         const payload = JSON.parse(event.data) as { type?: string; message?: ChatMessage };
         if (payload.type !== "message" || !payload.message) return;
         const nextMessage = payload.message;
+        const isNewIncomingMessage = !seenChatMessageIdsRef.current.has(nextMessage.id) && !nextMessage.deleted;
+        seenChatMessageIdsRef.current.add(nextMessage.id);
         setLiveChatMessages((current) => {
           const merged = new Map(current.map((message) => [message.id, message]));
           merged.set(nextMessage.id, nextMessage);
@@ -532,6 +538,7 @@ export function App() {
             .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
             .slice(-120);
         });
+        if (isNewIncomingMessage && nextMessage.viewerId !== viewerId && soundEnabled) playChatMessageAlert();
       } catch {
         // Ignore malformed stream payloads and wait for the next event.
       }
@@ -540,7 +547,7 @@ export function App() {
       if (stream.readyState === EventSource.CLOSED) stream.close();
     };
     return () => stream.close();
-  }, []);
+  }, [soundEnabled, viewerId]);
 
   useEffect(() => {
     if (!liveResults.length) return;
@@ -804,6 +811,11 @@ export function App() {
       return party === partyFilter;
     });
   }, [partyFilter, results]);
+  const hiddenByWatchGroupCount = useMemo(() => {
+    if (partyFilter === "all") return 0;
+    const visibleIds = new Set(visibleResults.map((result) => result.constituencyId));
+    return results.filter((result) => !visibleIds.has(result.constituencyId)).length;
+  }, [partyFilter, results, visibleResults]);
   const autoAttentionIds = useMemo(() => {
     const changed = new Set(leaderChanges.map((result) => result.constituencyId));
     return visibleResults
@@ -1255,6 +1267,11 @@ export function App() {
                     <option key={party} value={party}>{party}</option>
                   ))}
                 </select>
+                {hiddenByWatchGroupCount > 0 && (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                    {formatNumber(hiddenByWatchGroupCount)} selected {hiddenByWatchGroupCount === 1 ? "seat is" : "seats are"} hidden by the current watch group.
+                  </div>
+                )}
                 <div className="mt-4 flex gap-2">
                   <button className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => downloadJson(results)} disabled={!results.length}>
                     <Download className="mr-2 inline h-4 w-4" />
@@ -2206,7 +2223,19 @@ function CommunityChatPanel({
                 <div key={message.id} className="rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-zinc-950">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="truncate text-xs font-black text-zinc-950 dark:text-white">{message.displayName || "Anonymous"}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: chatIdentityColor(message.viewerId) }}
+                          aria-hidden="true"
+                        />
+                        <div
+                          className="truncate text-xs font-black"
+                          style={{ color: chatIdentityColor(message.viewerId) }}
+                        >
+                          {chatIdentityLabel(message)}
+                        </div>
+                      </div>
                       <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">{new Date(message.createdAt).toLocaleString()}</div>
                     </div>
                     {canModerate && !message.deleted && (
@@ -2379,7 +2408,7 @@ function ConstituencySelector({
       {open && (
         <>
           {selectedOptions.length > 0 && (
-            <div className="mt-3 flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+            <div className="mt-3 flex max-h-32 flex-wrap gap-1 overflow-y-auto rounded-md border border-zinc-200 p-2 pr-1 dark:border-zinc-800">
               {selectedOptions.map((option) => (
                 <button
                   key={option.constituencyId}
@@ -3762,6 +3791,40 @@ function countdownParts(ms: number) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return { days, hours, minutes, seconds };
+}
+
+function chatIdentityLabel(message: ChatMessage) {
+  const name = message.displayName.trim();
+  if (name) return name;
+  return `Anonymous #${chatIdentityNumber(message.viewerId)}`;
+}
+
+function chatIdentityNumber(viewerId: string) {
+  const value = Math.abs(hashString(viewerId));
+  return String((value % 90) + 10);
+}
+
+function chatIdentityColor(viewerId: string) {
+  const palette = [
+    "#0f766e",
+    "#1d4ed8",
+    "#7c3aed",
+    "#be123c",
+    "#b45309",
+    "#15803d",
+    "#c2410c",
+    "#4338ca"
+  ];
+  return palette[Math.abs(hashString(viewerId)) % palette.length];
+}
+
+function hashString(input: string) {
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(index);
+    hash |= 0;
+  }
+  return hash;
 }
 
 function raceConfidenceLabel(result: ConstituencyResult, countingPercent?: number) {
