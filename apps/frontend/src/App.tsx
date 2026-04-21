@@ -126,7 +126,7 @@ export function App() {
   const [viewerId] = useLocalStorageState<string>(VIEWER_ID_STORAGE_KEY, () => crypto.randomUUID());
   const [chatDisplayName, setChatDisplayName] = useLocalStorageState<string>("kerala-election:chat-display-name", "");
   const [chatOpen, setChatOpen] = useLocalStorageState<boolean>("kerala-election:chat-open", false);
-  const [lastSeenChatAt, setLastSeenChatAt] = useLocalStorageState<string>("kerala-election:last-seen-chat-at", "");
+  const [lastSeenChatAtByProfile, setLastSeenChatAtByProfile] = useLocalStorageState<Record<string, string>>("kerala-election:last-seen-chat-at-by-profile", {});
   const [liveAudioStarted, setLiveAudioStarted] = useLocalStorageState<boolean>("kerala-election:live-audio-started", false);
   const [liveAudioExpanded, setLiveAudioExpanded] = useLocalStorageState<boolean>("kerala-election:live-audio-expanded", false);
   const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
@@ -412,20 +412,20 @@ export function App() {
     refetchInterval: refreshMs
   });
   const chatMessagesQuery = useQuery({
-    queryKey: ["chat-messages"],
-    queryFn: () => fetchChatMessages(120),
+    queryKey: ["chat-messages", effectiveProfileId],
+    queryFn: () => fetchChatMessages(120, effectiveProfileId),
     staleTime: Infinity
   });
   const chatPostMutation = useMutation({
-    mutationFn: (payload: { viewerId: string; displayName?: string; message: string }) => postChatMessage(payload),
+    mutationFn: (payload: { profileId?: string; viewerId: string; displayName?: string; message: string; adminPassword?: string }) => postChatMessage(payload),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveProfileId] });
     }
   });
   const chatDeleteMutation = useMutation({
-    mutationFn: ({ password, messageId }: { password: string; messageId: string }) => deleteChatMessage(password, messageId),
+    mutationFn: ({ password, messageId, profileId }: { password: string; messageId: string; profileId?: string }) => deleteChatMessage(password, messageId, profileId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveProfileId] });
     }
   });
   const [liveChatMessages, setLiveChatMessages] = useState<ChatMessage[]>([]);
@@ -476,6 +476,7 @@ export function App() {
       return [id, "Fresh"] as const;
     }));
   }, [checkedAtById, lastCheckedById, liveResults, refreshMs, selectedIds]);
+  const lastSeenChatAt = lastSeenChatAtByProfile[effectiveProfileId] ?? "";
   const latestChatAt = useMemo(
     () => liveChatMessages.reduce((latest, message) => message.createdAt > latest ? message.createdAt : latest, ""),
     [liveChatMessages]
@@ -519,11 +520,14 @@ export function App() {
   }, [chatMessagesQuery.data?.messages]);
 
   useEffect(() => {
-    if (chatOpen && latestChatAt) setLastSeenChatAt(latestChatAt);
-  }, [chatOpen, latestChatAt, setLastSeenChatAt]);
+    if (!chatOpen || !latestChatAt) return;
+    setLastSeenChatAtByProfile((current) => current[effectiveProfileId] === latestChatAt ? current : { ...current, [effectiveProfileId]: latestChatAt });
+  }, [chatOpen, effectiveProfileId, latestChatAt, setLastSeenChatAtByProfile]);
 
   useEffect(() => {
-    const stream = new EventSource(chatStreamUrl());
+    seenChatMessageIdsRef.current = new Set();
+    setLiveChatMessages([]);
+    const stream = new EventSource(chatStreamUrl(effectiveProfileId));
     stream.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as { type?: string; message?: ChatMessage };
@@ -547,7 +551,7 @@ export function App() {
       if (stream.readyState === EventSource.CLOSED) stream.close();
     };
     return () => stream.close();
-  }, [soundEnabled, viewerId]);
+  }, [effectiveProfileId, soundEnabled, viewerId]);
 
   useEffect(() => {
     if (!liveResults.length) return;
@@ -1385,11 +1389,13 @@ export function App() {
         displayName={chatDisplayName}
         onDisplayNameChange={setChatDisplayName}
         onSend={(message) => chatPostMutation.mutateAsync({
+          profileId: effectiveProfileId,
           viewerId,
           displayName: chatDisplayName,
+          adminPassword: adminSessionPassword === ADMIN_PASSWORD ? adminSessionPassword : undefined,
           message
         })}
-        onDelete={(messageId) => chatDeleteMutation.mutateAsync({ password: adminSessionPassword, messageId })}
+        onDelete={(messageId) => chatDeleteMutation.mutateAsync({ password: adminSessionPassword, messageId, profileId: effectiveProfileId })}
         isLoading={chatMessagesQuery.isLoading && liveChatMessages.length === 0}
         isSending={chatPostMutation.isPending}
         isDeleting={chatDeleteMutation.isPending}
@@ -2220,21 +2226,27 @@ function CommunityChatPanel({
                 </div>
               )}
               {messages.map((message) => (
-                <div key={message.id} className="rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-zinc-950">
+                <div key={message.id} className={`rounded-md px-3 py-2 text-sm shadow-sm ${message.isAdmin ? "border border-rose-200 bg-rose-50/80 dark:border-rose-900 dark:bg-rose-950/30" : "bg-white dark:bg-zinc-950"}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span
                           className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: chatIdentityColor(message.viewerId) }}
+                          style={{ backgroundColor: message.isAdmin ? "#dc2626" : chatIdentityColor(message.viewerId) }}
                           aria-hidden="true"
                         />
                         <div
                           className="truncate text-xs font-black"
-                          style={{ color: chatIdentityColor(message.viewerId) }}
+                          style={{ color: message.isAdmin ? "#dc2626" : chatIdentityColor(message.viewerId) }}
                         >
                           {chatIdentityLabel(message)}
                         </div>
+                        {message.isAdmin && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-rose-700 dark:bg-rose-950/70 dark:text-rose-300">
+                            <Lock className="h-2.5 w-2.5" />
+                            Admin
+                          </span>
+                        )}
                       </div>
                       <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">{new Date(message.createdAt).toLocaleString()}</div>
                     </div>

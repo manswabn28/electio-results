@@ -91,23 +91,31 @@ export function sendTrafficHeartbeat(viewerId: string) {
   });
 }
 
-export function fetchChatMessages(limit = 120) {
-  return request<ChatMessagesResponse>(apiUrl(`/api/chat/messages?limit=${encodeURIComponent(String(limit))}`));
+export function fetchChatMessages(limit = 120, profileId?: string) {
+  return request<ChatMessagesResponse>(apiUrl(withProfile(`/api/chat/messages?limit=${encodeURIComponent(String(limit))}`, profileId)));
 }
 
-export async function postChatMessage(payload: { viewerId: string; displayName?: string; message: string }) {
+export async function postChatMessage(payload: { profileId?: string; viewerId: string; displayName?: string; message: string; adminPassword?: string }) {
+  const { adminPassword, ...body } = payload;
   const envelope = await request<ResultEnvelope<ChatMessage>>(apiUrl("/api/chat/messages"), {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
+    headers: {
+      "content-type": "application/json",
+      ...(adminPassword ? { authorization: `Bearer ${adminPassword}` } : {})
+    },
+    body: JSON.stringify(body)
   });
   return envelope.data;
 }
 
-export async function deleteChatMessage(password: string, messageId: string) {
-  const envelope = await request<ResultEnvelope<ChatMessage>>(apiUrl(`/api/admin/chat/messages/${encodeURIComponent(messageId)}`), {
+export async function deleteChatMessage(password: string, messageId: string, profileId?: string) {
+  const envelope = await request<ResultEnvelope<ChatMessage>>(apiUrl(withProfile(`/api/admin/chat/messages/${encodeURIComponent(messageId)}`, profileId)), {
     method: "DELETE",
-    headers: { authorization: `Bearer ${password}` }
+    headers: {
+      authorization: `Bearer ${password}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ profileId })
   });
   return envelope.data;
 }
@@ -116,8 +124,8 @@ export function apiBaseForDiagnostics() {
   return apiBaseUrl || "same-origin";
 }
 
-export function chatStreamUrl() {
-  return apiUrl("/api/chat/stream");
+export function chatStreamUrl(profileId?: string) {
+  return apiUrl(withProfile("/api/chat/stream", profileId));
 }
 
 export function updateSourceConfig(

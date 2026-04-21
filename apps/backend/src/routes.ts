@@ -98,10 +98,11 @@ export function createApiRouter(): Router {
 
   router.get("/chat/messages", asyncHandler(async (req, res) => {
     const limit = Number(req.query.limit ?? 120);
-    res.json(await getChatMessages(Number.isFinite(limit) ? limit : 120));
+    res.json(await getChatMessages(parseProfile(req) ?? "default", Number.isFinite(limit) ? limit : 120));
   }));
 
   router.get("/chat/stream", (req, res) => {
+    const profileId = parseProfile(req) ?? "default";
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -113,7 +114,7 @@ export function createApiRouter(): Router {
 
     send({ type: "ready", generatedAt: new Date().toISOString() });
 
-    const unsubscribe = subscribeToChat((message) => {
+    const unsubscribe = subscribeToChat(profileId, (message) => {
       send({ type: "message", message });
     });
 
@@ -129,9 +130,12 @@ export function createApiRouter(): Router {
   });
 
   router.post("/chat/messages", asyncHandler(async (req, res) => {
+    const adminPassword = resolveAdminPassword(req);
     const message = await addChatMessage({
+      profileId: String(req.body?.profileId ?? parseProfile(req) ?? "default"),
       viewerId: String(req.body?.viewerId ?? ""),
       displayName: String(req.body?.displayName ?? ""),
+      isAdmin: adminPassword === "ldfudf#2026",
       message: String(req.body?.message ?? "")
     });
     res.status(201).json({
@@ -141,7 +145,7 @@ export function createApiRouter(): Router {
   }));
 
   router.delete("/admin/chat/messages/:messageId", requireAdmin, asyncHandler(async (req, res) => {
-    const message = await deleteChatMessage(String(req.params.messageId ?? ""));
+    const message = await deleteChatMessage(String(req.body?.profileId ?? req.query.profile ?? "default"), String(req.params.messageId ?? ""));
     res.json({
       generatedAt: new Date().toISOString(),
       data: message
@@ -188,9 +192,7 @@ function asyncHandler(handler: (req: Request, res: Response) => Promise<unknown>
 }
 
 function requireAdmin(req: Request, res: Response, next: () => void): void {
-  const header = req.header("authorization");
-  const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-  const password = bearer || req.header("x-admin-password");
+  const password = resolveAdminPassword(req);
   if (password !== "ldfudf#2026") {
     res.status(401).json({
       error: {
@@ -202,4 +204,10 @@ function requireAdmin(req: Request, res: Response, next: () => void): void {
   }
 
   next();
+}
+
+function resolveAdminPassword(req: Request): string | undefined {
+  const header = req.header("authorization");
+  const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+  return bearer || req.header("x-admin-password");
 }

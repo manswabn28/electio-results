@@ -228,8 +228,10 @@ export type TrafficResponse = {
 
 export type ChatMessage = {
   id: string;
+  profileId: string;
   viewerId: string;
   displayName: string;
+  isAdmin?: boolean;
   message: string;
   createdAt: string;
   deleted?: boolean;
