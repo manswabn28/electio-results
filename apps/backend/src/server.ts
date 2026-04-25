@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { config } from "./config.js";
+import { startCachePrewarming } from "./eci/service.js";
 import { logger } from "./logger.js";
 import { createApiRouter } from "./routes.js";
 import { startDiscoveryScheduler } from "./eci/discovery.js";
@@ -48,12 +49,14 @@ app.use((_req, res) => {
 
 app.listen(config.PORT, () => {
   startDiscoveryScheduler();
+  startCachePrewarming();
   logger.info(
     {
       port: config.PORT,
       sourceConfigured: config.sourceConfigured,
       electionPath: config.ECI_ELECTION_PATH || undefined,
-      keralaStatePage: config.ECI_KERALA_STATE_PAGE || undefined
+      keralaStatePage: config.ECI_KERALA_STATE_PAGE || undefined,
+      prewarmIntervalSeconds: config.PREWARM_INTERVAL_SECONDS
     },
     "Kerala election results API listening"
   );

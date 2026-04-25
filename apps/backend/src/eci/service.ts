@@ -28,6 +28,8 @@ const backgroundRefreshes = new Map<string, Promise<unknown>>();
 const foregroundRefreshes = new Map<string, Promise<unknown>>();
 const candidateIndexes = new Map<string, CandidatesResponse>();
 const candidateIndexPromises = new Map<string, Promise<CandidatesResponse>>();
+let prewarmTimer: NodeJS.Timeout | undefined;
+let prewarmPromise: Promise<void> | undefined;
 
 async function getKeralaStatePageUrl(profileId?: string): Promise<string | undefined> {
   const cacheKey = `state-page-url:${profileId ?? "active"}`;
@@ -322,6 +324,22 @@ export function clearElectionCache(): void {
   candidateIndexPromises.clear();
 }
 
+export function startCachePrewarming(): void {
+  if (prewarmTimer) return;
+  void prewarmElectionCaches();
+  prewarmTimer = setInterval(() => {
+    void prewarmElectionCaches();
+  }, Math.max(2_000, config.PREWARM_INTERVAL_SECONDS * 1000));
+}
+
+export async function prewarmElectionCaches(): Promise<void> {
+  if (prewarmPromise) return prewarmPromise;
+  prewarmPromise = runPrewarmElectionCaches().finally(() => {
+    prewarmPromise = undefined;
+  });
+  return prewarmPromise;
+}
+
 export async function getSourceDiagnostics(profileId?: string): Promise<SourceDiagnosticsResponse> {
   const errors: SourceDiagnosticsResponse["errors"] = [];
   const { sourceUrl, summaries, error } = await getStateSummaries(profileId);
@@ -421,4 +439,61 @@ function fallbackState(error: string): { summaries: ConstituencySummary[]; error
       margin: 0
     }))
   };
+}
+
+async function runPrewarmElectionCaches(): Promise<void> {
+  const sourceConfig = await getSourceConfig().catch(() => undefined);
+  const profileIds = resolvePrewarmProfileIds(sourceConfig);
+  for (const profileId of profileIds) {
+    await prewarmProfileCache(profileId);
+  }
+}
+
+async function prewarmProfileCache(profileId: string): Promise<void> {
+  try {
+    const { sourceUrl, summaries } = await getStateSummaries(profileId);
+    if (!sourceUrl || !summaries.length) return;
+    await getPartySummary(profileId).catch((error) => {
+      logger.warn({ error, profileId }, "Party summary prewarm failed");
+    });
+    const likelyWatchedIds = pickLikelyWatchedConstituencyIds(summaries);
+    await Promise.all(
+      likelyWatchedIds.map((constituencyId) =>
+        getConstituencyResult(constituencyId, profileId).catch((error) => {
+          logger.warn({ error, profileId, constituencyId }, "Constituency prewarm failed");
+        })
+      )
+    );
+  } catch (error) {
+    logger.warn({ error, profileId }, "Profile cache prewarm failed");
+  }
+}
+
+function resolvePrewarmProfileIds(sourceConfig?: Awaited<ReturnType<typeof getSourceConfig>>) {
+  const ids = new Set<string>();
+  if (sourceConfig?.activeProfileId) ids.add(sourceConfig.activeProfileId);
+  for (const profile of sourceConfig?.profiles ?? []) {
+    if (profile.enabled) ids.add(profile.profileId);
+  }
+  if (ids.size === 0) ids.add("default");
+  return [...ids];
+}
+
+function pickLikelyWatchedConstituencyIds(summaries: ConstituencySummary[]) {
+  const byPriority = [...summaries]
+    .filter((summary) => summary.constituencyId)
+    .sort((left, right) => {
+      const favoriteDelta = Number(isDefaultFavoriteSummary(right)) - Number(isDefaultFavoriteSummary(left));
+      if (favoriteDelta) return favoriteDelta;
+      const marginDelta = (left.margin || Number.MAX_SAFE_INTEGER) - (right.margin || Number.MAX_SAFE_INTEGER);
+      if (marginDelta) return marginDelta;
+      return Number(left.constituencyNumber) - Number(right.constituencyNumber);
+    });
+  return [...new Set(byPriority.slice(0, 6).map((summary) => summary.constituencyId))];
+}
+
+function isDefaultFavoriteSummary(summary: ConstituencySummary) {
+  const comparableName = normalizeComparable(summary.constituencyName);
+  const comparableId = normalizeComparable(summary.constituencyId);
+  return config.defaultFavoriteIds.includes(comparableName) || config.defaultFavoriteIds.includes(comparableId);
 }

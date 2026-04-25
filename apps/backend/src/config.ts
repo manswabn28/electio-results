@@ -16,7 +16,8 @@ const envSchema = z.object({
   ECI_BACKOFF_BASE_SECONDS: z.coerce.number().min(5).max(120).default(15),
   ECI_BACKOFF_MAX_SECONDS: z.coerce.number().min(10).max(600).default(90),
   DEFAULT_FAVORITES: z.string().default("thrissur,ernakulam,palakkad,nemom"),
-  REQUEST_TIMEOUT_MS: z.coerce.number().min(3000).max(30000).default(12000)
+  REQUEST_TIMEOUT_MS: z.coerce.number().min(3000).max(30000).default(12000),
+  PREWARM_INTERVAL_SECONDS: z.coerce.number().min(2).max(300).default(6)
 });
 
 const parsed = envSchema.parse(process.env);

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import EmojiPicker, { Theme } from "emoji-picker-react";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, MessageCircle, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ChatMessage, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
+import type { CandidateOption, ChatMessage, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PartySeatSummary, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
 import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playChatMessageAlert, playLeaderAlert, primeAudioAlerts, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
@@ -108,6 +108,7 @@ export function App() {
   const [cachedResultsByProfile, setCachedResultsByProfile] = useLocalStorageState<Record<string, Record<string, ConstituencyResult>>>("kerala-election:cached-results-by-profile", {});
   const [cachedConstituenciesByProfile, setCachedConstituenciesByProfile] = useLocalStorageState<Record<string, ConstituencyOption[]>>("kerala-election:cached-constituencies-by-profile", {});
   const [cachedCandidatesByProfile, setCachedCandidatesByProfile] = useLocalStorageState<Record<string, CandidateOption[]>>("kerala-election:cached-candidates-by-profile", {});
+  const [cachedPartySummaryByProfile, setCachedPartySummaryByProfile] = useLocalStorageState<Record<string, PartySeatSummary[]>>("kerala-election:cached-party-summary-by-profile", {});
   const [lastCheckedById, setLastCheckedById] = useLocalStorageState<Record<string, number>>("kerala-election:last-checked-by-id", {});
   const [leaderHistory, setLeaderHistory] = useLocalStorageState<Record<string, LeaderHistoryEntry[]>>("kerala-election:leader-history", {});
   const [constituencyNotes, setConstituencyNotes] = useLocalStorageState<Record<string, string>>("kerala-election:constituency-notes", {});
@@ -409,6 +410,13 @@ export function App() {
   const partySummaryQuery = useQuery({
     queryKey: ["party-summary", effectiveProfileId],
     queryFn: () => fetchPartySummary(effectiveProfileId),
+    placeholderData: cachedPartySummaryByProfile[effectiveProfileId]
+      ? {
+          generatedAt: new Date(0).toISOString(),
+          sourceUrl: "",
+          parties: cachedPartySummaryByProfile[effectiveProfileId]
+        }
+      : undefined,
     refetchInterval: refreshMs
   });
   const chatMessagesQuery = useQuery({
@@ -433,7 +441,7 @@ export function App() {
   const detailResultsQuery = useQuery({
     queryKey: ["results", "details", effectiveProfileId, selectedIds],
     queryFn: () => fetchResults(selectedIds, effectiveProfileId),
-    enabled: selectedIds.length > 0 && Boolean(summaryQuery.data?.sourceConfigured),
+    enabled: selectedIds.length > 0,
     refetchInterval: refreshMs,
     retry: 3,
     retryDelay: (attempt: number) => Math.min(12000, 1500 * 2 ** attempt)
@@ -578,6 +586,16 @@ export function App() {
       return changed ? next : current;
     });
   }, [checkedAtById, liveResults, setCachedResults, setLastCheckedById]);
+
+  useEffect(() => {
+    const parties = partySummaryQuery.data?.parties;
+    if (!parties?.length) return;
+    setCachedPartySummaryByProfile((current) => {
+      const existing = current[effectiveProfileId] ?? [];
+      if (JSON.stringify(existing) === JSON.stringify(parties)) return current;
+      return { ...current, [effectiveProfileId]: parties };
+    });
+  }, [effectiveProfileId, partySummaryQuery.data?.parties, setCachedPartySummaryByProfile]);
 
   useEffect(() => {
     if (!alertRules.winnerDeclared) return;
