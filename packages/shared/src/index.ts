@@ -241,3 +241,32 @@ export type ChatMessagesResponse = {
   generatedAt: string;
   messages: ChatMessage[];
 };
+
+export type TelegramAlertRules = {
+  leadChange: boolean;
+  winnerDeclared: boolean;
+  marginBelow500: boolean;
+  majorityCrossed: boolean;
+};
+
+export type TelegramSubscriptionLinkResponse = {
+  generatedAt: string;
+  enabled: boolean;
+  botUsername?: string;
+  botUrl?: string;
+  linked: boolean;
+  pendingCode?: string;
+};
+
+export type TelegramSubscriptionStatusResponse = {
+  generatedAt: string;
+  enabled: boolean;
+  botUsername?: string;
+  linked: boolean;
+  viewerId: string;
+  profileId: string;
+  chatId?: string;
+  chatLabel?: string;
+  rules?: TelegramAlertRules;
+  selectedCount?: number;
+};

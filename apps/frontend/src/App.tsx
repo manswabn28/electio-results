@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import EmojiPicker, { Theme } from "emoji-picker-react";
-import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, History, Hourglass, Lock, Maximize2, MessageCircle, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, HelpCircle, History, Hourglass, Lock, Maximize2, MessageCircle, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
 import type { CandidateOption, ChatMessage, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PartySeatSummary, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
+import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, createTelegramSubscriptionLink, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, fetchTelegramSubscriptionStatus, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, shareImageProxyUrl, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playChatMessageAlert, playLeaderAlert, primeAudioAlerts, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -83,8 +83,32 @@ type ChangeInsight = {
   detail: string;
 };
 
+type AppView = "dashboard" | "help";
+type ShareCardFormat = "square" | "story" | "landscape";
+type ShareCardPayload =
+  | { kind: "constituency"; result: ConstituencyResult; checkedAt?: number }
+  | { kind: "party-summary"; parties: PartySeatSummary[]; electionTitle: string }
+  | { kind: "battleground"; races: ConstituencySummary[]; electionTitle: string }
+  | {
+      kind: "victory";
+      outcome: {
+        winner: PartySeatSummary;
+        runnerUp?: PartySeatSummary;
+        totalSeats: number;
+        majorityMark: number;
+        seatLead: number;
+        closest?: ConstituencySummary;
+        biggest?: ConstituencySummary;
+        electionTitle: string;
+      };
+    };
+
 export function App() {
   const queryClient = useQueryClient();
+  const [appView, setAppView] = useState<AppView>(() => {
+    if (typeof window === "undefined") return "dashboard";
+    return new URLSearchParams(window.location.search).get("view") === "help" ? "help" : "dashboard";
+  });
   const [selectedIds, setSelectedIds] = useLocalStorageState<string[]>(SELECTED_STORAGE_KEY, []);
   const [hasBootstrappedFavorites, setHasBootstrappedFavorites] = useState(() =>
     localStorage.getItem(SELECTED_STORAGE_KEY) !== null
@@ -139,10 +163,15 @@ export function App() {
   const [lostToasts, setLostToasts] = useState<LostNotification[]>([]);
   const [tightRaceToasts, setTightRaceToasts] = useState<TightRaceNotification[]>([]);
   const [activePartyModal, setActivePartyModal] = useState<string | null>(null);
+  const [battlegroundOpen, setBattlegroundOpen] = useState(false);
+  const [assemblyVictoryOpen, setAssemblyVictoryOpen] = useState(false);
+  const [shareCardPayload, setShareCardPayload] = useState<ShareCardPayload | null>(null);
   const [seenTightRaceIds, setSeenTightRaceIds] = useLocalStorageState<string[]>("kerala-election:seen-tight-race-notifications", []);
   const pendingTightRaceToastIds = useRef<Set<string>>(new Set());
   const hydratedProfileRef = useRef("");
   const seenChatMessageIdsRef = useRef<Set<string>>(new Set());
+  const shownAssemblyVictoryRef = useRef("");
+  const previousAssemblyVictorySignatureRef = useRef("");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -168,16 +197,20 @@ export function App() {
   useEffect(() => {
     const selectedCount = selectedIds.length;
     applySeo({
-      title: selectedCount
-        ? `${selectedCount} Constituencies Tracked | Kerala Election Live`
-        : "Kerala Assembly Election 2026 Live Tracker",
-      description: selectedCount
-        ? `Live ECI-backed Kerala Assembly Election results for ${selectedCount} selected constituencies, including candidate leads, margins, party totals, and updates.`
-        : undefined
+      title: appView === "help"
+        ? "Election Tracker Help | User Manual & FAQ"
+        : selectedCount
+          ? `${selectedCount} Constituencies Tracked | Kerala Election Live`
+          : "Kerala Assembly Election 2026 Live Tracker",
+      description: appView === "help"
+        ? "Complete user manual for the election tracker, including features, alerts, watch mode, admin controls, limitations, and FAQ."
+        : selectedCount
+          ? `Live ECI-backed Kerala Assembly Election results for ${selectedCount} selected constituencies, including candidate leads, margins, party totals, and updates.`
+          : undefined
     });
     initAnalytics();
     trackPageView(document.title);
-  }, [selectedIds.length]);
+  }, [appView, selectedIds.length]);
 
   useEffect(() => {
     if (!watchMode || !("wakeLock" in navigator)) return;
@@ -256,6 +289,15 @@ export function App() {
     const threshold = Number(params.get("alert"));
     if (Number.isFinite(threshold) && threshold > 0) setAlertThreshold(threshold);
   }, [setAlertThreshold, setPartyFilter, setPinnedIds, setSelectedIds, setSortMode, setWatchedCandidateIds]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      setAppView(params.get("view") === "help" ? "help" : "dashboard");
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const sourceConfigQuery = useQuery({
     queryKey: ["source-config"],
@@ -423,6 +465,31 @@ export function App() {
     queryKey: ["chat-messages", effectiveProfileId],
     queryFn: () => fetchChatMessages(120, effectiveProfileId),
     staleTime: Infinity
+  });
+  const telegramStatusQuery = useQuery({
+    queryKey: ["telegram-status", viewerId, effectiveProfileId],
+    queryFn: () => fetchTelegramSubscriptionStatus(viewerId, effectiveProfileId),
+    enabled: Boolean(viewerId && effectiveProfileId),
+    refetchInterval: 30_000
+  });
+  const telegramLinkMutation = useMutation({
+    mutationFn: () => createTelegramSubscriptionLink({
+      viewerId,
+      profileId: effectiveProfileId,
+      selectedIds,
+      watchedCandidateIds
+    }),
+    onSuccess: (data) => {
+      if (data.botUrl) {
+        window.open(data.botUrl, "_blank", "noopener,noreferrer");
+        setToast(data.linked ? "Telegram alerts already linked." : "Open Telegram and tap Start to activate alerts.");
+        window.setTimeout(() => setToast(""), 4000);
+      } else {
+        setToast("Telegram alerts are not configured yet.");
+        window.setTimeout(() => setToast(""), 4000);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["telegram-status", viewerId, effectiveProfileId] });
+    }
   });
   const chatPostMutation = useMutation({
     mutationFn: (payload: { profileId?: string; viewerId: string; displayName?: string; message: string; adminPassword?: string }) => postChatMessage(payload),
@@ -771,6 +838,30 @@ export function App() {
       .sort((a, b) => a.margin - b.margin)
       .slice(0, 6);
   }, [allSummaryQuery.data?.results, selectedIds]);
+  const battlegroundRaces = useMemo(() => {
+    const changed = new Set(leaderChanges.map((item) => item.constituencyId));
+    const all = allSummaryQuery.data?.results ?? [];
+    const activeClosest = all
+      .filter((summary) => !isDeclaredWinner(summary.statusText || summary.roundStatus))
+      .filter((summary) => summary.margin > 0 && summary.margin <= TIGHT_MARGIN_LIMIT);
+    const declaredClosest = all
+      .filter((summary) => isDeclaredWinner(summary.statusText || summary.roundStatus))
+      .filter((summary) => summary.margin > 0 && summary.margin <= TIGHT_MARGIN_LIMIT);
+    const pool = activeClosest.length ? activeClosest : declaredClosest;
+
+    return pool
+      .sort((left, right) => {
+        const leftDeclared = isDeclaredWinner(left.statusText || left.roundStatus);
+        const rightDeclared = isDeclaredWinner(right.statusText || right.roundStatus);
+        const activeDelta = Number(leftDeclared) - Number(rightDeclared);
+        if (activeDelta) return activeDelta;
+        const leaderChangeDelta = Number(changed.has(right.constituencyId)) - Number(changed.has(left.constituencyId));
+        if (leaderChangeDelta) return leaderChangeDelta;
+        return left.margin - right.margin;
+      })
+      .slice(0, 20);
+  }, [allSummaryQuery.data?.results, leaderChanges]);
+  const battlegroundPreview = useMemo(() => battlegroundRaces.slice(0, 6), [battlegroundRaces]);
   const tightRaceNotificationCandidates = useMemo(() => {
     const realCandidates = tightRaceSuggestions
       .filter((summary) => isNotificationWorthyTightRace(summary))
@@ -921,6 +1012,49 @@ export function App() {
     if (!activePartyModal) return [];
     return partySeatDetails.get(partyLookupKey(activePartyModal)) ?? [];
   }, [activePartyModal, partySeatDetails]);
+  const assemblyVictory = useMemo(() => {
+    const summaries = allSummaryQuery.data?.results ?? [];
+    const parties = partySummaryQuery.data?.parties ?? [];
+    if (!parties.length) return null;
+
+    const uniqueSummaries = Array.from(
+      new Map(summaries.map((summary) => [summary.constituencyId || summary.constituencyNumber, summary])).values()
+    );
+    const totalWonSeats = parties.reduce((sum, party) => sum + party.won, 0);
+    const totalLeadOrWonSeats = parties.reduce((sum, party) => sum + party.total, 0);
+    const expectedSeats = Math.max(
+      uniqueSummaries.length,
+      constituencyOptions.length,
+      totalLeadOrWonSeats
+    );
+
+    if (!expectedSeats) return null;
+
+    const summariesFullyDeclared =
+      uniqueSummaries.length >= expectedSeats &&
+      uniqueSummaries.every((summary) => isDeclaredWinner(summary.statusText || summary.roundStatus));
+    const partyTotalsFullyDeclared = totalWonSeats >= expectedSeats && totalLeadOrWonSeats >= expectedSeats;
+
+    if (!summariesFullyDeclared && !partyTotalsFullyDeclared) return null;
+
+    const sortedParties = [...parties].sort((left, right) => right.total - left.total);
+    const winner = sortedParties[0];
+    if (!winner || winner.total <= 0) return null;
+    const runnerUp = sortedParties[1];
+    const closest = [...uniqueSummaries].filter((summary) => summary.margin > 0).sort((left, right) => left.margin - right.margin)[0];
+    const biggest = [...uniqueSummaries].sort((left, right) => right.margin - left.margin)[0];
+    const totalSeats = parties.reduce((sum, party) => sum + party.total, 0) || expectedSeats;
+    return {
+      winner,
+      runnerUp,
+      totalSeats,
+      majorityMark: Math.floor(totalSeats / 2) + 1,
+      seatLead: Math.max(0, winner.total - (runnerUp?.total ?? 0)),
+      closest,
+      biggest,
+      electionTitle: activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"
+    };
+  }, [activeProfile?.electionTitle, allSummaryQuery.data?.results, constituencyOptions.length, partySummaryQuery.data?.parties, sourceConfigQuery.data?.activeTitle]);
   const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds, autoAttentionIds);
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
   const lastEciChangeAt = latestDataUpdatedAt(Object.values(lastChangedAt));
@@ -935,6 +1069,24 @@ export function App() {
   const showOldResultNotice = preElectionWindowActive && !sourceConfigQuery.data?.hidePreviewBanner;
   const showCountingCountdown = preElectionWindowActive && !sourceConfigQuery.data?.hideCountdown;
   const adminSessionPassword = typeof window !== "undefined" ? sessionStorage.getItem("kerala-election:admin-password") ?? "" : "";
+  useEffect(() => {
+    const signature = assemblyVictory
+      ? `${effectiveProfileId}:${assemblyVictory.winner.party}:${assemblyVictory.winner.total}:${assemblyVictory.totalSeats}`
+      : "";
+
+    if (!signature) {
+      previousAssemblyVictorySignatureRef.current = "";
+      return;
+    }
+
+    const isFirstLoadForThisWinner = shownAssemblyVictoryRef.current !== signature;
+    const justTurnedDeclared = previousAssemblyVictorySignatureRef.current !== signature;
+
+    previousAssemblyVictorySignatureRef.current = signature;
+    if (!isFirstLoadForThisWinner && !justTurnedDeclared) return;
+    shownAssemblyVictoryRef.current = signature;
+    setAssemblyVictoryOpen(true);
+  }, [assemblyVictory, effectiveProfileId]);
   const enterWatchMode = () => {
     trackEvent("watch_mode_enter", { selected_count: selectedIds.length });
     setWatchMode(true);
@@ -1058,6 +1210,32 @@ export function App() {
     void queryClient.invalidateQueries();
   };
 
+  const openHelpPage = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "help");
+    window.history.pushState(null, "", url);
+    setAppView("help");
+    trackEvent("help_open");
+  };
+
+  const closeHelpPage = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("view");
+    window.history.pushState(null, "", url);
+    setAppView("dashboard");
+    trackEvent("help_close");
+  };
+
+  if (appView === "help") {
+    return (
+      <HelpPage
+        activeProfileTitle={activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"}
+        refreshSeconds={sourceConfigQuery.data?.refreshIntervalSeconds ?? 30}
+        onBack={closeHelpPage}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen max-w-full overflow-x-hidden">
       {(showOldResultNotice || showCountingCountdown) && (
@@ -1097,9 +1275,17 @@ export function App() {
                   <Maximize2 className="h-4 w-4" />
                 </button>
               </div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-                Skip the noise, track what matters. Curated election tracking, tailored to you.
-              </p>
+              <div className="mt-2 flex max-w-3xl flex-wrap items-center gap-x-3 gap-y-1 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+                <p>Track only what matters. Ignore the noise.</p>
+                <button
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200"
+                  onClick={openHelpPage}
+                  type="button"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                  Help & user guide
+                </button>
+              </div>
             </div>
             <div className="grid w-full min-w-0 grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible">
               <QuickAddSearch
@@ -1187,6 +1373,21 @@ export function App() {
             Leader changed in {leaderChanges.map((item) => item.constituencyName).join(", ")}.
           </div>
         )}
+        {battlegroundPreview.length > 0 && (
+          <BattlegroundStrip
+            races={battlegroundPreview}
+            selectedIds={selectedIds}
+            leaderChanges={leaderChanges}
+            onAdd={(summary) => {
+              trackEvent("battleground_add", { constituency_id: summary.constituencyId, margin: summary.margin });
+              setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
+            }}
+            onOpenAll={() => {
+              trackEvent("battleground_open_all", { count: battlegroundRaces.length });
+              setBattlegroundOpen(true);
+            }}
+          />
+        )}
 
         <div className={watchMode ? "block min-w-0" : `grid min-w-0 gap-5 ${sidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
           {!watchMode && <aside className="order-2 space-y-4 lg:order-none lg:col-start-1 lg:row-start-1">
@@ -1265,6 +1466,7 @@ export function App() {
                 history={leaderHistory[result.constituencyId] ?? []}
                 note={constituencyNotes[result.constituencyId] ?? ""}
                 onNoteChange={(note) => setConstituencyNotes((current) => ({ ...current, [result.constituencyId]: note }))}
+                onShare={() => setShareCardPayload({ kind: "constituency", result, checkedAt: checkedAtById[result.constituencyId] || lastCheckedById[result.constituencyId] || lastSuccessAt })}
               />
             ))}
           </div>
@@ -1346,6 +1548,32 @@ export function App() {
                   onSave={saveWatchProfile}
                   onLoad={loadWatchProfile}
                 />
+                <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-black uppercase tracking-wide text-sky-800 dark:text-sky-200">Telegram alerts</div>
+                      <div className="mt-1 text-xs font-semibold text-sky-900 dark:text-sky-100">
+                        {telegramStatusQuery.data?.linked
+                          ? `Linked to ${telegramStatusQuery.data.chatLabel || "Telegram"}.`
+                          : "Get lead changes, winners, and tight-race alerts on Telegram."}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-press rounded-md border border-sky-300 bg-white px-3 py-2 text-xs font-black uppercase text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
+                      onClick={() => telegramLinkMutation.mutate()}
+                      disabled={telegramLinkMutation.isPending || !effectiveProfileId}
+                      type="button"
+                      title="Get Telegram alerts"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="mt-2 text-[11px] text-sky-800 dark:text-sky-200">
+                    {telegramStatusQuery.data?.linked
+                      ? `${telegramStatusQuery.data.selectedCount ?? selectedIds.length} seat alerts active for this election profile.`
+                      : "Tap the icon, open the bot, and press Start once."}
+                  </div>
+                </div>
                 <DiagnosticsMini
                   total={selectedIds.length}
                   fresh={Object.values(resultFreshnessById).filter((item) => item === "Fresh").length}
@@ -1400,6 +1628,11 @@ export function App() {
         chatOpen={chatOpen}
         chatUnreadCount={unreadChatCount}
         onChatClick={() => setChatOpen((current) => !current)}
+        onShare={() => setShareCardPayload({
+          kind: "party-summary",
+          parties: partySummaryQuery.data?.parties ?? [],
+          electionTitle: activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"
+        })}
         onPartyClick={(party) => {
           setActivePartyModal(party);
           trackEvent("party_summary_open", { party: shortPartyName(party) });
@@ -1437,6 +1670,31 @@ export function App() {
           onClose={() => setActivePartyModal(null)}
         />
       )}
+      {assemblyVictoryOpen && assemblyVictory && (
+        <AssemblyVictoryOverlay
+          outcome={assemblyVictory}
+          onShare={() => setShareCardPayload({ kind: "victory", outcome: assemblyVictory })}
+          onClose={() => setAssemblyVictoryOpen(false)}
+        />
+      )}
+      {battlegroundOpen && (
+        <BattlegroundModal
+          races={battlegroundRaces}
+          selectedIds={selectedIds}
+          leaderChanges={leaderChanges}
+          onAdd={(summary) => {
+            setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
+            trackEvent("battleground_modal_add", { constituency_id: summary.constituencyId, margin: summary.margin });
+          }}
+          onShare={() => setShareCardPayload({
+            kind: "battleground",
+            races: battlegroundRaces.slice(0, 5),
+            electionTitle: activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"
+          })}
+          onClose={() => setBattlegroundOpen(false)}
+        />
+      )}
+      {shareCardPayload && <ShareCardModal payload={shareCardPayload} onClose={() => setShareCardPayload(null)} />}
       {toast && (
         <div className="fixed right-4 top-4 z-[60] max-w-sm rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-lg dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100">
           {toast}
@@ -3034,6 +3292,7 @@ function PartySummaryDock({
   chatOpen,
   chatUnreadCount,
   onChatClick,
+  onShare,
   onPartyClick
 }: {
   parties: { party: string; won: number; leading: number; total: number; color?: string }[];
@@ -3042,6 +3301,7 @@ function PartySummaryDock({
   chatOpen?: boolean;
   chatUnreadCount?: number;
   onChatClick?: () => void;
+  onShare?: () => void;
   onPartyClick?: (party: string) => void;
 }) {
   const previousTotals = useRef<Record<string, number>>({});
@@ -3058,7 +3318,20 @@ function PartySummaryDock({
       <div className="mx-auto flex max-w-7xl items-center gap-3 overflow-x-auto px-4 py-2 pr-28 sm:px-6 sm:pr-32 lg:px-8">
         {parties.length > 0 && (
           <div className="shrink-0 pr-2">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Seats</div>
+            <div className="flex items-center gap-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Seats</div>
+              {onShare && (
+                <button
+                  className="btn-press inline-flex h-5 w-5 items-center justify-center rounded-md border border-zinc-300 text-zinc-500 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-400 dark:hover:text-white"
+                  onClick={onShare}
+                  title="Share party summary"
+                  aria-label="Share party summary"
+                  type="button"
+                >
+                  <Share2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
             <div className="text-sm font-black text-zinc-950 dark:text-white">{formatNumber(totalSeats)}</div>
           </div>
         )}
@@ -3196,6 +3469,795 @@ function PartyConstituencyModal({
   );
 }
 
+function AssemblyVictoryOverlay({
+  outcome,
+  onShare,
+  onClose
+}: {
+  outcome: {
+    winner: PartySeatSummary;
+    runnerUp?: PartySeatSummary;
+    totalSeats: number;
+    majorityMark: number;
+    seatLead: number;
+    closest?: ConstituencySummary;
+    biggest?: ConstituencySummary;
+    electionTitle: string;
+  };
+  onShare: () => void;
+  onClose: () => void;
+}) {
+  const winnerColor = outcome.winner.color ?? "#166534";
+  const winnerShort = shortPartyName(outcome.winner.party);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[160] bg-black/70 backdrop-blur-md" onMouseDown={onClose}>
+      <div className="flex min-h-screen items-center justify-center p-4 sm:p-6" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="relative w-full max-w-5xl overflow-hidden rounded-md border border-white/15 bg-zinc-950 text-white shadow-2xl">
+          <div className="absolute inset-0 opacity-20" style={{ background: `radial-gradient(circle at top, ${winnerColor}, transparent 55%)` }} />
+          <div className="absolute left-8 top-8 h-32 w-32 rounded-full bg-amber-300/20 blur-3xl" />
+          <div className="absolute right-8 top-12 h-28 w-28 rounded-full bg-emerald-400/20 blur-3xl" />
+          <button
+            className="btn-press absolute right-14 top-4 z-10 rounded-full border border-white/20 bg-black/20 p-2 text-white hover:bg-white/10"
+            onClick={onShare}
+            aria-label="Share victory card"
+            type="button"
+          >
+            <Share2 className="h-4 w-4" />
+          </button>
+          <button
+            className="btn-press absolute right-4 top-4 z-10 rounded-full border border-white/20 bg-black/20 p-2 text-white hover:bg-white/10"
+            onClick={onClose}
+            aria-label="Close victory announcement"
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <div className="relative p-6 sm:p-8">
+            <div className="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="text-[11px] font-black uppercase tracking-[0.24em] text-amber-300">Result Declared</div>
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="relative">
+                    <div className="absolute inset-0 animate-ping rounded-full bg-amber-300/30" />
+                    <div className="relative rounded-full bg-amber-300 p-3 text-amber-950 shadow-lg">
+                      <Crown className="h-8 w-8 fill-current" />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-wide text-zinc-300">{outcome.electionTitle}</div>
+                    <div className="text-xs font-semibold text-zinc-400">All constituencies declared</div>
+                  </div>
+                </div>
+                <div className="mt-8 text-5xl font-black leading-none sm:text-7xl" style={{ color: winnerColor }}>
+                  {winnerShort}
+                </div>
+                <div className="mt-3 text-xl font-bold text-white sm:text-2xl">{outcome.winner.party}</div>
+                <div className="mt-4 flex flex-wrap items-center gap-3 text-sm font-semibold text-zinc-300">
+                  <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1">Wins {formatNumber(outcome.winner.won)} seats</span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">Leads/Wins total {formatNumber(outcome.winner.total)}</span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">Majority mark {formatNumber(outcome.majorityMark)}</span>
+                </div>
+              </div>
+              <div className="grid w-full max-w-xl grid-cols-2 gap-3">
+                <VictoryFactCard label="Winning Seats" value={formatNumber(outcome.winner.total)} accent={winnerColor} />
+                <VictoryFactCard label="Seat Lead" value={formatNumber(outcome.seatLead)} accent="#f59e0b" />
+                <VictoryFactCard
+                  label="Runner-up"
+                  value={outcome.runnerUp ? shortPartyName(outcome.runnerUp.party) : "-"}
+                  sub={outcome.runnerUp ? `${formatNumber(outcome.runnerUp.total)} seats` : "No runner-up data"}
+                />
+                <VictoryFactCard label="Assembly Size" value={formatNumber(outcome.totalSeats)} />
+              </div>
+            </div>
+            <div className="mt-8 grid gap-3 lg:grid-cols-3">
+              <VictoryStoryCard
+                title="Closest Result"
+                value={outcome.closest?.constituencyName ?? "-"}
+                sub={outcome.closest ? `${shortPartyName(outcome.closest.leadingParty)} by ${formatNumber(outcome.closest.margin)}` : "No margin data"}
+              />
+              <VictoryStoryCard
+                title="Biggest Winning Margin"
+                value={outcome.biggest?.constituencyName ?? "-"}
+                sub={outcome.biggest ? `${shortPartyName(outcome.biggest.leadingParty)} by ${formatNumber(outcome.biggest.margin)}` : "No margin data"}
+              />
+              <VictoryStoryCard
+                title="Runner-up Gap"
+                value={formatNumber(outcome.seatLead)}
+                sub={outcome.runnerUp ? `${winnerShort} ahead of ${shortPartyName(outcome.runnerUp.party)}` : "Single-party finish"}
+              />
+            </div>
+            <div className="mt-8 flex justify-end">
+              <button className="btn-press-dark rounded-md bg-white px-4 py-2 text-sm font-black text-zinc-950" onClick={onClose} type="button">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VictoryFactCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-white/5 p-4">
+      <div className="text-[10px] font-black uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className="mt-2 text-3xl font-black" style={accent ? { color: accent } : undefined}>{value}</div>
+      {sub ? <div className="mt-1 text-xs font-semibold text-zinc-400">{sub}</div> : null}
+    </div>
+  );
+}
+
+function VictoryStoryCard({ title, value, sub }: { title: string; value: string; sub: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/20 p-4">
+      <div className="text-[10px] font-black uppercase tracking-wide text-zinc-400">{title}</div>
+      <div className="mt-2 truncate text-lg font-black text-white">{value}</div>
+      <div className="mt-1 text-sm font-semibold text-zinc-300">{sub}</div>
+    </div>
+  );
+}
+
+function BattlegroundStrip({
+  races,
+  selectedIds,
+  leaderChanges,
+  onAdd,
+  onOpenAll
+}: {
+  races: ConstituencySummary[];
+  selectedIds: string[];
+  leaderChanges: ConstituencyResult[];
+  onAdd: (summary: ConstituencySummary) => void;
+  onOpenAll: () => void;
+}) {
+  const changed = useMemo(() => new Set(leaderChanges.map((item) => item.constituencyId)), [leaderChanges]);
+  return (
+    <section className="mb-5 rounded-md border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 p-4 dark:border-amber-900 dark:from-amber-950/40 dark:via-zinc-950 dark:to-rose-950/30">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">🔥 Battleground Races</div>
+          <div className="mt-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">Closest contests updated live</div>
+        </div>
+        <button
+          className="btn-press inline-flex items-center gap-2 self-start rounded-md border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 dark:border-amber-800 dark:text-amber-100 dark:hover:bg-amber-950/60"
+          onClick={onOpenAll}
+          type="button"
+        >
+          View all battleground seats
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {races.map((summary) => {
+          const selected = selectedIds.includes(summary.constituencyId);
+          const severity = battlegroundSeverity(summary);
+          const leadChanged = changed.has(summary.constituencyId);
+          return (
+            <div key={summary.constituencyId} className="rounded-md border border-amber-200 bg-white/90 p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/90">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-base font-black text-zinc-950 dark:text-white">{summary.constituencyName}</div>
+                  <div className="mt-1 text-xs font-semibold text-zinc-500">
+                    {shortPartyName(summary.leadingParty || "Leader")} +{formatNumber(summary.margin)}
+                    {summary.trailingParty ? ` vs ${shortPartyName(summary.trailingParty)}` : ""}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {leadChanged && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-900 dark:bg-sky-900/60 dark:text-sky-100">Lead changed</span>}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${severity.tone}`}>
+                    {severity.label}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold text-zinc-500">
+                  {isDeclaredWinner(summary.statusText || summary.roundStatus) ? "Declared result" : summary.roundStatus || summary.statusText || "Counting"}
+                </div>
+                {selected ? (
+                  <span className="rounded-md bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100">Tracking</span>
+                ) : (
+                  <button className="btn-press rounded-md bg-zinc-950 px-3 py-1.5 text-[10px] font-black uppercase text-white dark:bg-white dark:text-zinc-950" onClick={() => onAdd(summary)} type="button">
+                    Add
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function BattlegroundModal({
+  races,
+  selectedIds,
+  leaderChanges,
+  onAdd,
+  onShare,
+  onClose
+}: {
+  races: ConstituencySummary[];
+  selectedIds: string[];
+  leaderChanges: ConstituencyResult[];
+  onAdd: (summary: ConstituencySummary) => void;
+  onShare: () => void;
+  onClose: () => void;
+}) {
+  const changed = useMemo(() => new Set(leaderChanges.map((item) => item.constituencyId)), [leaderChanges]);
+  return (
+    <div className="fixed inset-0 z-[145] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <div
+        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">🔥 Battleground Races</div>
+            <h2 className="mt-1 text-xl font-black text-zinc-950 dark:text-white">Top 20 closest races right now</h2>
+            <div className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Smallest margins, lead changes, and recount-risk seats in one place.</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="btn-press rounded-full border border-zinc-300 p-2 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300" onClick={onShare} type="button" aria-label="Share battleground card">
+              <Share2 className="h-4 w-4" />
+            </button>
+            <button className="btn-press rounded-full border border-zinc-300 p-2 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300" onClick={onClose} type="button" aria-label="Close battleground seats">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="overflow-y-auto p-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {races.map((summary) => {
+              const severity = battlegroundSeverity(summary);
+              const selected = selectedIds.includes(summary.constituencyId);
+              const leadChanged = changed.has(summary.constituencyId);
+              return (
+                <div key={summary.constituencyId} className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-lg font-black text-zinc-950 dark:text-white">{summary.constituencyName}</div>
+                      <div className="mt-1 text-xs font-semibold text-zinc-500">AC {summary.constituencyNumber}</div>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${severity.tone}`}>{severity.label}</span>
+                  </div>
+                  <div className="mt-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                    {shortPartyName(summary.leadingParty || "Leader")} leads by <span className="font-black text-zinc-950 dark:text-white">{formatNumber(summary.margin)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Against {shortPartyName(summary.trailingParty || "Runner-up")}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {leadChanged && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-900 dark:bg-sky-900/60 dark:text-sky-100">Lead changed</span>}
+                    {summary.margin <= HIGH_TIGHT_MARGIN_LIMIT && (
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-900 dark:bg-rose-900/60 dark:text-rose-100">Recount risk</span>
+                    )}
+                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-black text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                      {isDeclaredWinner(summary.statusText || summary.roundStatus) ? "Declared" : summary.roundStatus || summary.statusText || "Counting"}
+                    </span>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold text-zinc-500">
+                      {summary.leadingCandidate || "Leader"}{summary.trailingCandidate ? ` vs ${summary.trailingCandidate}` : ""}
+                    </div>
+                    {selected ? (
+                      <span className="rounded-md bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100">Already tracking</span>
+                    ) : (
+                      <button className="btn-press rounded-md bg-zinc-950 px-3 py-1.5 text-[10px] font-black uppercase text-white dark:bg-white dark:text-zinc-950" onClick={() => onAdd(summary)} type="button">
+                        Add seat
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShareCardModal({ payload, onClose }: { payload: ShareCardPayload; onClose: () => void }) {
+  const [format, setFormat] = useState<ShareCardFormat>("square");
+  const [busy, setBusy] = useState<"" | "download" | "share">("");
+  const title = payload.kind === "constituency"
+    ? `${payload.result.constituencyName} result card`
+    : payload.kind === "party-summary"
+      ? "Party summary card"
+      : payload.kind === "battleground"
+        ? "Battleground card"
+        : "Victory card";
+
+  const run = async (mode: "download" | "share") => {
+    try {
+      setBusy(mode);
+      const blob = await buildShareCardBlob(payload, format);
+      const fileName = shareCardFileName(payload, format);
+      if (mode === "download") {
+        downloadBlob(blob, fileName);
+      } else {
+        const file = new File([blob], fileName, { type: "image/png" });
+        if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+          await navigator.share({ files: [file], title: title });
+        } else {
+          downloadBlob(blob, fileName);
+        }
+      }
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <div
+        className="w-full max-w-md rounded-md border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700 dark:text-emerald-400">Share Card</div>
+            <h3 className="mt-1 text-lg font-black text-zinc-950 dark:text-white">{title}</h3>
+            <div className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Generate a clean image for WhatsApp, Instagram, X, or Telegram.</div>
+          </div>
+          <button className="btn-press rounded-full border border-zinc-300 p-2 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300" onClick={onClose} type="button" aria-label="Close share card generator">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { id: "square" as const, label: "Square" },
+              { id: "story" as const, label: "Story" },
+              { id: "landscape" as const, label: "Wide" }
+            ].map((option) => (
+              <button
+                key={option.id}
+                className={`rounded-md border px-3 py-2 text-sm font-black ${format === option.id ? "border-emerald-600 bg-emerald-50 text-emerald-900 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100" : "border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"}`}
+                onClick={() => setFormat(option.id)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+            Subtle branding is added automatically. Candidate photos may fall back to initials when external image access is restricted by the source.
+          </div>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button className="btn-press rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => void run("download")} disabled={Boolean(busy)} type="button">
+              <Download className="mr-2 inline h-4 w-4" />
+              {busy === "download" ? "Working..." : "Download"}
+            </button>
+            <button className="btn-press-dark rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white dark:bg-white dark:text-zinc-950" onClick={() => void run("share")} disabled={Boolean(busy)} type="button">
+              <Share2 className="mr-2 inline h-4 w-4" />
+              {busy === "share" ? "Working..." : "Share"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HelpPage({
+  activeProfileTitle,
+  refreshSeconds,
+  onBack
+}: {
+  activeProfileTitle: string;
+  refreshSeconds: number;
+  onBack: () => void;
+}) {
+  return (
+    <main className="min-h-screen bg-white text-zinc-950 dark:bg-zinc-950 dark:text-white">
+      <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-700 dark:text-emerald-400">Help & Manual</div>
+              <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Election Tracker User Guide</h1>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+                Everything about the app in one place: what it does, how to use each feature, what to expect on counting day,
+                and where the practical limits are.
+              </p>
+            </div>
+            <button
+              className="btn-press inline-flex shrink-0 items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
+              onClick={onBack}
+              type="button"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <HelpStatCard label="Focused election" value={activeProfileTitle} />
+            <HelpStatCard label="Refresh cadence" value={`${refreshSeconds}s`} />
+            <HelpStatCard label="Source" value="Official ECI result pages via backend parser" />
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+        <HelpSection title="What this app is">
+          <HelpParagraph>
+            This application is a personalized election-tracking dashboard built around official Election Commission of India
+            result pages. Instead of forcing users to watch every constituency, it lets them focus only on the seats, candidates,
+            and race patterns they actually care about.
+          </HelpParagraph>
+          <HelpParagraph>
+            It combines live result fetching, constituency and candidate watchlists, profile-based election switching, watch mode,
+            alerting, summary intelligence, and community chat in one place.
+          </HelpParagraph>
+        </HelpSection>
+
+        <HelpSection title="What users can do">
+          <HelpList
+            items={[
+              "Select multiple constituencies from the searchable seat list.",
+              "Search candidates directly and automatically add their constituency into the tracked list.",
+              "Track leading candidate, trailing candidate, lead margin, total votes, and counting progress for each selected card.",
+              "Pin important constituencies and sort cards in different ways.",
+              "Filter the board by party or watch group.",
+              "Switch between assembly result profiles from the clickable header when multiple elections are available.",
+              "Use watch mode for large-screen passive viewing.",
+              "See live winner, loss, leader-change, and tight-race notifications.",
+              "Open timeline playback for a constituency and replay how its lead evolved.",
+              "Join the profile-specific community chat and follow live discussion.",
+              "Listen to live background audio from supported news channels.",
+              "Open admin settings to manage URLs, discovery, countdowns, and source behavior if you have admin access."
+            ]}
+          />
+        </HelpSection>
+
+        <HelpSection title="Quick start">
+          <HelpStepList
+            steps={[
+              "Open the app and confirm the election profile shown in the header. If multiple elections are available, click the header title and choose the one you want.",
+              "Use the top Add seat/candidate search to quickly add a constituency or candidate, or use the Constituencies panel on the left.",
+              "Select one or more constituencies. Their cards appear immediately in the main board.",
+              "Optionally search candidates in Candidate Watch. When you watch a candidate, the app also selects that candidate’s constituency for you.",
+              "Use Sort cards and Watch group in the left controls to reorganize what you see.",
+              "Turn Alerts On if you want winner toasts, tight-race signals, and chat notification sounds.",
+              "Use Watch mode when you want a distraction-free large-screen monitoring view.",
+              "Refresh happens automatically every configured number of seconds, but you can still use Refresh anytime."
+            ]}
+          />
+        </HelpSection>
+
+        <HelpSection title="Main screen explained">
+          <HelpFeatureGrid
+            features={[
+              {
+                title: "Header and election switcher",
+                body: "The large title at the top is clickable. It acts as a profile selector when more than one assembly result is available. The focused election changes the whole app: constituency list, candidates, chat, summaries, alerts, and caches."
+              },
+              {
+                title: "Quick add search",
+                body: "The top search box accepts constituencies and candidates. It is the fastest way to add a seat or candidate without opening the left panel."
+              },
+              {
+                title: "Metrics strip",
+                body: "Shows selected count, next refresh countdown, last successful sync time, and a live source-health label."
+              },
+              {
+                title: "Constituency selector",
+                body: "The left panel lists all constituencies from the active election profile. It supports search, multi-select, clear, and favorite-based shortcuts."
+              },
+              {
+                title: "Candidate watch",
+                body: "Lets users search candidates without browsing every constituency. Watching a candidate automatically watches that candidate’s constituency too."
+              },
+              {
+                title: "Selected constituency cards",
+                body: "These are the core live cards. They show leader, runner-up, photos, lead margin, vote totals, result state, and other compact indicators. Some extra candidate information appears through hover or compact supporting cues."
+              },
+              {
+                title: "Summary dock",
+                body: "The dock at the bottom shows total seats by party, using party-color cues inspired by the ECI layout. Each party tile can open its own constituency-level breakdown."
+              },
+              {
+                title: "Utility corner",
+                body: "The small floating utility tile shows chat access, watching-now count, and total views without taking up a separate section."
+              }
+            ]}
+          />
+        </HelpSection>
+
+        <HelpSection title="Detailed feature guide">
+          <HelpSubSection title="1. Constituency selection">
+            <HelpParagraph>
+              The Constituencies panel loads all available seats for the active election profile. Users can search the list, tick multiple checkboxes,
+              and their selections persist in browser storage. Clearing selections removes tracked cards. If a candidate is removed from Candidate Watch,
+              the linked constituency is also removed from selection when appropriate.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="2. Candidate Watch">
+            <HelpParagraph>
+              Candidate Watch is designed for users who care more about a person than a seat. Search by candidate name, select them, and the app
+              automatically pulls that candidate’s constituency into the main tracked set. Candidate Watch is profile-specific, so a Bihar watchlist
+              does not leak into Tamil Nadu or Kerala.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="3. Result cards">
+            <HelpParagraph>
+              Each selected constituency appears as a compact live card. The leader is visually stronger, the runner-up is smaller, and both carry
+              party and vote context. Declared seats show a completion indicator, while active counting seats show a counting indicator and progress
+              cues when available.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="4. Watch mode">
+            <HelpParagraph>
+              Watch mode is built for large-screen viewing. It strips away the side panels, keeps the screen active, and supports optional auto-scroll.
+              This is useful when you want to leave the app open on a TV, monitor, or projector and just watch the selected cards update.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="5. Refresh behavior">
+            <HelpParagraph>
+              The app auto-refreshes on a configurable interval, and individual result cards update without a full-page reload. Manual refresh is
+              available at any time. Backend caching and prewarming help keep refreshes responsive while reducing repeated pressure on the ECI source.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="6. Alerts and toasts">
+            <HelpParagraph>
+              Alerts can notify users about new winners, significant tight races, selected candidate events, and certain loss scenarios. Winner toasts
+              and tight-race toasts are designed to stay informative without forcing the user to scan the whole page manually.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="7. Tight races intelligence">
+            <HelpParagraph>
+              The app continuously inspects broader constituency trends, not only the currently selected seats. It can surface constituencies where the
+              margin is dangerously narrow or becoming interesting later in the count. These appear in the left pane and can also trigger toasts.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="8. Timeline playback">
+            <HelpParagraph>
+              Timeline playback lets a user open a constituency and replay how its lead changed over time. This is useful for understanding the story of
+              a seat rather than only its current state.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="9. Summary dock and party modal">
+            <HelpParagraph>
+              The summary dock at the bottom shows seat totals by party. Clicking a party tile opens a detailed view of constituencies where that party
+              is leading or has won, along with candidate context and margins.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="10. Community chat">
+            <HelpParagraph>
+              The chat is live and profile-specific. If a user is watching Bihar, they see Bihar chat. If they switch to another election, they enter
+              that election’s chat room instead. Anonymous users get stable visual identity cues, named users keep their names, and admin messages are
+              clearly highlighted.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="11. Live audio">
+            <HelpParagraph>
+              Users can play supported live news audio streams alongside the tracker. This is intended to complement passive watch mode and not interfere
+              with card refresh behavior.
+            </HelpParagraph>
+          </HelpSubSection>
+
+          <HelpSubSection title="12. Victory announcement">
+            <HelpParagraph>
+              Once an assembly is fully declared, the app can open a full-screen winner announcement showing the victorious party, seat total,
+              majority context, and closing facts like closest result and biggest margin. This works per selected election profile.
+            </HelpParagraph>
+          </HelpSubSection>
+        </HelpSection>
+
+        <HelpSection title="Admin controls">
+          <HelpParagraph>
+            Admin features are hidden from normal users. After admin authentication, the admin can control result-source URLs, refresh timing,
+            countdown/banner visibility, source discovery, source profile updates, and revert behavior.
+          </HelpParagraph>
+          <HelpList
+            items={[
+              "Change base URL, constituency list URL, and candidate detail URL template for the currently focused election profile.",
+              "Set refresh interval seconds.",
+              "Hide or show the pre-election scrolling banner.",
+              "Hide or show the top countdown.",
+              "Run auto-discovery to detect available election profiles and their URLs.",
+              "Review discovery status, confidence, sample verification, and auto-apply details.",
+              "Revert to previous source configuration when needed."
+            ]}
+          />
+        </HelpSection>
+
+        <HelpSection title="Highlights">
+          <HelpList
+            items={[
+              "Focused tracking instead of information overload.",
+              "Official-source-backed data through backend parsing.",
+              "Profile-aware switching across multiple assembly elections.",
+              "Candidate Watch that automatically syncs with tracked constituencies.",
+              "Compact live cards tuned for both mobile and big-screen use.",
+              "Watch mode for passive long-duration monitoring.",
+              "Background intelligence for tight races and major changes.",
+              "Profile-specific live community chat.",
+              "Admin-controlled source discovery for counting-day URL changes.",
+              "Backend prewarming for faster first refresh."
+            ]}
+          />
+        </HelpSection>
+
+        <HelpSection title="Limitations and practical realities">
+          <HelpList
+            items={[
+              "The app depends on the structure of official ECI result pages. If the HTML changes significantly, parser updates may be needed.",
+              "The app cannot be fresher than the ECI source itself. If ECI lags, the app will lag by the same source delay.",
+              "Heavy counting-day traffic, caching, or anti-bot measures on ECI infrastructure can affect response speed.",
+              "Some browser behaviors, especially around audio autoplay, depend on user interaction and browser policy.",
+              "Live features like leader changes and counting progress are most meaningful during active counting, not after full declaration.",
+              "Anonymous chat is convenient, but not a full identity system.",
+              "The frontend bundle is fairly feature-rich and therefore heavier than a minimal single-purpose page."
+            ]}
+          />
+        </HelpSection>
+
+        <HelpSection title="FAQ">
+          <HelpFaq
+            items={[
+              {
+                q: "Is this app using official data?",
+                a: "Yes. The app is designed to fetch and normalize data from official Election Commission of India result pages through the backend."
+              },
+              {
+                q: "Does the browser scrape ECI directly?",
+                a: "No. The backend handles HTML fetching and parsing. The frontend consumes backend APIs."
+              },
+              {
+                q: "Will my selected constituencies stay saved?",
+                a: "Yes. Seat selection, candidate watch choices, pins, and several other preferences are stored in browser storage and also tracked per election profile."
+              },
+              {
+                q: "If multiple assembly elections are available, how do I switch?",
+                a: "Click the main election title in the header. A selector opens and lets you switch the focused election profile."
+              },
+              {
+                q: "Does the chat show all elections together?",
+                a: "No. Chat is scoped to the currently selected election profile."
+              },
+              {
+                q: "Why might refresh still feel slow sometimes?",
+                a: "The app itself is optimized, but final freshness still depends on the response time and caching behavior of the official ECI pages."
+              },
+              {
+                q: "Can the app survive election-day URL changes?",
+                a: "Yes, that is one of the main design goals. Admin controls and auto-discovery exist specifically to manage changing ECI paths."
+              },
+              {
+                q: "Will the app notify me if I did not manually select a constituency?",
+                a: "Yes, for certain categories like global winners and tight-race intelligence. Some alerts intentionally look beyond your selected list."
+              },
+              {
+                q: "What happens after counting is over?",
+                a: "The app continues to show final results, party summary, and historical context. Certain live-counting behaviors naturally become less relevant once everything is declared."
+              },
+              {
+                q: "Do I need admin access to use the app normally?",
+                a: "No. Normal users can use all tracking, watch, chat, and viewing features without admin access. Admin is only for source and operational controls."
+              }
+            ]}
+          />
+        </HelpSection>
+      </section>
+    </main>
+  );
+}
+
+function HelpSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <h2 className="text-xl font-black text-zinc-950 dark:text-white">{title}</h2>
+      <div className="mt-4 space-y-4">{children}</div>
+    </section>
+  );
+}
+
+function HelpSubSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-sm font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">{title}</h3>
+      <div className="mt-2">{children}</div>
+    </div>
+  );
+}
+
+function HelpParagraph({ children }: { children: ReactNode }) {
+  return <p className="text-sm leading-6 text-zinc-700 dark:text-zinc-300">{children}</p>;
+}
+
+function HelpList({ items }: { items: string[] }) {
+  return (
+    <ul className="space-y-2 text-sm leading-6 text-zinc-700 dark:text-zinc-300">
+      {items.map((item) => (
+        <li key={item} className="flex gap-3">
+          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function HelpStepList({ steps }: { steps: string[] }) {
+  return (
+    <ol className="space-y-3 text-sm leading-6 text-zinc-700 dark:text-zinc-300">
+      {steps.map((step, index) => (
+        <li key={step} className="flex gap-3">
+          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-xs font-black text-white">
+            {index + 1}
+          </span>
+          <span>{step}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function HelpFeatureGrid({ features }: { features: Array<{ title: string; body: string }> }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {features.map((feature) => (
+        <div key={feature.title} className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+          <div className="text-sm font-black text-zinc-950 dark:text-white">{feature.title}</div>
+          <div className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-300">{feature.body}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HelpFaq({ items }: { items: Array<{ q: string; a: string }> }) {
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <details key={item.q} className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+          <summary className="cursor-pointer list-none text-sm font-black text-zinc-950 dark:text-white">{item.q}</summary>
+          <p className="mt-3 text-sm leading-6 text-zinc-700 dark:text-zinc-300">{item.a}</p>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function HelpStatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="mt-2 text-sm font-black text-zinc-950 dark:text-white">{value}</div>
+    </div>
+  );
+}
+
 function ResultCard({
   result,
   previous,
@@ -3210,7 +4272,8 @@ function ResultCard({
   lowBandwidthMode,
   history,
   note,
-  onNoteChange
+  onNoteChange,
+  onShare
 }: {
   result: ConstituencyResult;
   previous?: ConstituencyResult;
@@ -3226,6 +4289,7 @@ function ResultCard({
   history: LeaderHistoryEntry[];
   note: string;
   onNoteChange: (note: string) => void;
+  onShare: () => void;
 }) {
   const [notesOpen, setNotesOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
@@ -3281,6 +4345,14 @@ function ResultCard({
               aria-label={isPinned ? "Unpin constituency" : "Pin constituency"}
             >
               <Star className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
+            </button>
+            <button
+              className="rounded-md p-1 text-zinc-400 hover:text-emerald-700 dark:hover:text-emerald-300"
+              onClick={onShare}
+              title="Share result card"
+              aria-label={`Share ${result.constituencyName} result card`}
+            >
+              <Share2 className="h-4 w-4" />
             </button>
             <button
               className="rounded-md p-1 text-zinc-400 hover:text-rose-600 dark:hover:text-rose-300"
@@ -3923,6 +4995,594 @@ function tightRaceNotificationKey(summary: ConstituencySummary, demo: boolean) {
   const severity = summary.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "high" : "tight";
   const leader = normalizeKeyPart(summary.leadingCandidate || "leader");
   return `${demo ? "demo" : "live"}:${summary.constituencyId}:${stage}:${severity}:${leader}`;
+}
+
+function battlegroundSeverity(summary: ConstituencySummary) {
+  const declared = isDeclaredWinner(summary.statusText || summary.roundStatus);
+  if (summary.margin <= HIGH_TIGHT_MARGIN_LIMIT) {
+    return {
+      label: declared ? "Recount risk" : "Very tight",
+      tone: "bg-rose-100 text-rose-900 dark:bg-rose-900/60 dark:text-rose-100"
+    };
+  }
+  if (summary.margin <= 2500) {
+    return {
+      label: declared ? "Narrow result" : "Tight",
+      tone: "bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100"
+    };
+  }
+  return {
+    label: declared ? "Declared" : "Competitive",
+    tone: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+  };
+}
+
+async function buildShareCardBlob(payload: ShareCardPayload, format: ShareCardFormat): Promise<Blob> {
+  const { width, height } = shareCardDimensions(format);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas is not available.");
+
+  const theme = shareTheme(payload);
+  drawShareBackground(ctx, width, height, theme.primary, theme.secondary);
+
+  if (payload.kind === "constituency") {
+    await drawConstituencyShareCard(ctx, width, height, payload.result, payload.checkedAt, theme);
+  } else if (payload.kind === "party-summary") {
+    drawPartySummaryShareCard(ctx, width, height, payload.parties, payload.electionTitle, theme);
+  } else if (payload.kind === "battleground") {
+    drawBattlegroundShareCard(ctx, width, height, payload.races, payload.electionTitle, theme);
+  } else {
+    drawVictoryShareCard(ctx, width, height, payload.outcome, theme);
+  }
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error("Could not generate image."));
+      else resolve(blob);
+    }, "image/png");
+  });
+}
+
+function shareCardDimensions(format: ShareCardFormat) {
+  if (format === "story") return { width: 1080, height: 1920 };
+  if (format === "landscape") return { width: 1200, height: 675 };
+  return { width: 1080, height: 1080 };
+}
+
+function shareTheme(payload: ShareCardPayload) {
+  if (payload.kind === "victory") {
+    return { primary: payload.outcome.winner.color ?? "#166534", secondary: "#f59e0b" };
+  }
+  if (payload.kind === "party-summary") {
+    return { primary: payload.parties[0]?.color ?? "#166534", secondary: payload.parties[1]?.color ?? "#0f766e" };
+  }
+  if (payload.kind === "constituency") {
+    return { primary: "#166534", secondary: payload.result.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "#be123c" : "#0f766e" };
+  }
+  return { primary: "#d97706", secondary: "#be123c" };
+}
+
+function drawShareBackground(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  primary: string,
+  secondary: string
+) {
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, "#ffffff");
+  gradient.addColorStop(0.45, hexToRgba(primary, 0.1));
+  gradient.addColorStop(1, hexToRgba(secondary, 0.14));
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  const radial = ctx.createRadialGradient(width * 0.85, height * 0.18, 20, width * 0.85, height * 0.18, width * 0.3);
+  radial.addColorStop(0, hexToRgba(secondary, 0.28));
+  radial.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = radial;
+  ctx.fillRect(0, 0, width, height);
+}
+
+async function drawConstituencyShareCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  result: ConstituencyResult,
+  checkedAt: number | undefined,
+  theme: { primary: string; secondary: string }
+) {
+  if (width > height) {
+    await drawConstituencyLandscapeShareCard(ctx, width, height, result, checkedAt, theme);
+    return;
+  }
+
+  const padding = Math.round(width * 0.075);
+  const contentWidth = width - padding * 2;
+  const leader = result.candidates[0];
+  const runner = result.candidates[1];
+  const declared = isDeclaredWinner(result.statusText || result.roundStatus);
+  const roundProgress = parseRoundProgress(result.roundStatus || result.statusText || "");
+  const status = declared ? "Result Declared" : result.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "Very Tight" : result.margin <= TIGHT_MARGIN_LIMIT ? "Tight Race" : "Live Update";
+
+  drawBrandLine(ctx, padding, padding, contentWidth, theme.primary);
+  drawTitle(ctx, "ELECTION LIVE", padding, padding + 8, Math.round(width * 0.038), theme.primary);
+  drawHeadline(ctx, `${result.constituencyName} Constituency`, padding, padding + 56, Math.round(width * 0.056), "#0f172a", contentWidth);
+  drawSubHeadline(
+    ctx,
+    `${shortPartyName(result.leadingParty || leader?.party || "Leader")} ${declared ? "wins" : "leading"} by ${formatNumber(result.margin)} votes`,
+    padding,
+    padding + 116,
+    Math.round(width * 0.034),
+    "#334155",
+    contentWidth
+  );
+
+  const photoY = padding + 170;
+  await drawAvatarBlock(ctx, leader?.photoUrl, result.leadingCandidate || leader?.candidateName || "Leader", padding, photoY, Math.round(width * 0.11), "#166534");
+  await drawAvatarBlock(ctx, runner?.photoUrl, result.trailingCandidate || runner?.candidateName || "Runner-up", width - padding - Math.round(width * 0.11), photoY, Math.round(width * 0.085), "#be123c");
+
+  const nameX = padding + Math.round(width * 0.14);
+  const runnerPhotoWidth = Math.round(width * 0.1);
+  const leadPanelWidth = Math.max(180, width - nameX - padding - runnerPhotoWidth - 20);
+  drawHeadline(ctx, truncateText(result.leadingCandidate || leader?.candidateName || "-", width >= 1200 ? 34 : 24), nameX, photoY + 18, Math.round(width * 0.042), "#0f172a", leadPanelWidth);
+  drawSubHeadline(ctx, shortPartyName(result.leadingParty || leader?.party || "-"), nameX, photoY + 56, Math.round(width * 0.027), "#475569", leadPanelWidth);
+  drawPill(ctx, status, nameX, photoY + 86, theme.secondary, "#ffffff");
+
+  const scoreCardTop = photoY + Math.round(width * 0.14);
+  drawStatBox(ctx, padding, scoreCardTop, contentWidth, Math.round(height * 0.14), "#ffffff", "#e2e8f0");
+  drawMetricPair(ctx, "Lead", formatNumber(result.margin), padding + 28, scoreCardTop + 26, width * 0.32, "#166534");
+  drawMetricPair(ctx, "Leader", formatNumber(leader?.totalVotes ?? 0), padding + width * 0.36, scoreCardTop + 26, width * 0.25, "#0f172a");
+  drawMetricPair(ctx, "Runner", formatNumber(runner?.totalVotes ?? 0), padding + width * 0.63, scoreCardTop + 26, width * 0.22, "#0f172a");
+
+  const tableTop = scoreCardTop + Math.round(height * 0.19);
+  drawDataRow(ctx, padding, tableTop, contentWidth, "Leader", truncateText(result.leadingCandidate || leader?.candidateName || "-", width >= 1200 ? 40 : 28), shortPartyName(result.leadingParty || leader?.party || "-"), theme.primary);
+  drawDataRow(ctx, padding, tableTop + 90, contentWidth, "Runner-up", truncateText(result.trailingCandidate || runner?.candidateName || "-", width >= 1200 ? 40 : 28), shortPartyName(result.trailingParty || runner?.party || "-"), "#be123c");
+
+  const footerTop = height - padding - 160;
+  const rounds = roundProgress ? `${roundProgress.current}/${roundProgress.total}` : result.roundStatus || "Live";
+  drawFooterInfo(ctx, [
+    `Rounds: ${rounds}`,
+    `Updated: ${checkedAt ? new Date(checkedAt).toLocaleTimeString() : result.lastUpdated || "Live"}`,
+    "Live via OneKerala Results"
+  ], padding, footerTop, contentWidth);
+  drawWatermark(ctx, width, height, padding);
+}
+
+async function drawConstituencyLandscapeShareCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  result: ConstituencyResult,
+  checkedAt: number | undefined,
+  theme: { primary: string; secondary: string }
+) {
+  const padding = Math.round(width * 0.075);
+  const contentWidth = width - padding * 2;
+  const leader = result.candidates[0];
+  const runner = result.candidates[1];
+  const declared = isDeclaredWinner(result.statusText || result.roundStatus);
+  const roundProgress = parseRoundProgress(result.roundStatus || result.statusText || "");
+  const rounds = roundProgress ? `${roundProgress.current}/${roundProgress.total}` : result.roundStatus || "Live";
+  const headerWidth = Math.round(contentWidth * 0.62);
+  const topY = padding + 8;
+  const leaderPhotoSize = 120;
+  const runnerPhotoSize = 92;
+  const photoY = padding + 168;
+  const scoreTop = padding + 300;
+  const detailTop = scoreTop + 128;
+  const footerY = height - padding - 26;
+
+  drawBrandLine(ctx, padding, padding, contentWidth, theme.primary);
+  drawTitle(ctx, "ELECTION LIVE", padding, topY, 52, theme.primary);
+  drawHeadline(ctx, `${result.constituencyName} Constituency`, padding, padding + 56, 66, "#0f172a", headerWidth);
+  drawSubHeadline(
+    ctx,
+    `${shortPartyName(result.leadingParty || leader?.party || "Leader")} ${declared ? "wins" : "leading"} by ${formatNumber(result.margin)} votes`,
+    padding,
+    padding + 138,
+    32,
+    "#475569",
+    headerWidth
+  );
+
+  await drawAvatarBlock(ctx, leader?.photoUrl, result.leadingCandidate || leader?.candidateName || "Leader", padding, photoY, leaderPhotoSize, "#166534");
+  const leaderTextX = padding + leaderPhotoSize + 26;
+  drawHeadline(
+    ctx,
+    truncateText(result.leadingCandidate || leader?.candidateName || "-", 30),
+    leaderTextX,
+    photoY + 12,
+    56,
+    "#0f172a",
+    Math.round(contentWidth * 0.48)
+  );
+  drawSubHeadline(
+    ctx,
+    shortPartyName(result.leadingParty || leader?.party || "-"),
+    leaderTextX,
+    photoY + 74,
+    28,
+    "#64748b",
+    Math.round(contentWidth * 0.32)
+  );
+  drawPill(ctx, declared ? "Result Declared" : "Live Update", leaderTextX, photoY + 92, declared ? "#e11d48" : theme.secondary, "#ffffff", 220);
+
+  const runnerPhotoX = width - padding - runnerPhotoSize;
+  await drawAvatarBlock(ctx, runner?.photoUrl, result.trailingCandidate || runner?.candidateName || "Runner-up", runnerPhotoX, photoY + 12, runnerPhotoSize, "#be123c");
+  ctx.fillStyle = "#64748b";
+  ctx.font = "800 20px Inter, Arial, sans-serif";
+  const runnerParty = shortPartyName(result.trailingParty || runner?.party || "Runner-up");
+  const runnerPartyWidth = ctx.measureText(runnerParty).width;
+  ctx.fillText(runnerParty, runnerPhotoX + runnerPhotoSize / 2 - runnerPartyWidth / 2, photoY + 126);
+
+  drawStatBox(ctx, padding, scoreTop, contentWidth, 92, "#ffffff", "#e2e8f0");
+  drawMetricPair(ctx, "Lead", formatNumber(result.margin), padding + 26, scoreTop + 24, 180, "#166534");
+  drawMetricPair(ctx, "Leader", formatNumber(leader?.totalVotes ?? 0), padding + Math.round(contentWidth * 0.42), scoreTop + 24, 180, "#0f172a");
+  drawMetricPair(ctx, "Runner", formatNumber(runner?.totalVotes ?? 0), padding + Math.round(contentWidth * 0.73), scoreTop + 24, 160, "#0f172a");
+
+  drawDataRow(
+    ctx,
+    padding,
+    detailTop,
+    contentWidth,
+    "Leader",
+    truncateText(result.leadingCandidate || leader?.candidateName || "-", 44),
+    shortPartyName(result.leadingParty || leader?.party || "-"),
+    theme.primary
+  );
+  drawDataRow(
+    ctx,
+    padding,
+    detailTop + 86,
+    contentWidth,
+    "Runner-up",
+    truncateText(result.trailingCandidate || runner?.candidateName || "-", 44),
+    shortPartyName(result.trailingParty || runner?.party || "-"),
+    "#be123c"
+  );
+
+  drawFooterInfo(
+    ctx,
+    [
+      `Rounds: ${rounds}`,
+      `Updated: ${checkedAt ? new Date(checkedAt).toLocaleTimeString() : result.lastUpdated || "Live"}`,
+      "Live via OneKerala Results"
+    ],
+    padding,
+    footerY - 64,
+    Math.round(contentWidth * 0.56)
+  );
+  drawWatermark(ctx, width, height, padding);
+}
+
+function drawPartySummaryShareCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  parties: PartySeatSummary[],
+  electionTitle: string,
+  theme: { primary: string; secondary: string }
+) {
+  const padding = Math.round(width * 0.075);
+  const contentWidth = width - padding * 2;
+  drawBrandLine(ctx, padding, padding, contentWidth, theme.primary);
+  drawTitle(ctx, "ELECTION LIVE", padding, padding + 8, Math.round(width * 0.038), theme.primary);
+  drawHeadline(ctx, electionTitle, padding, padding + 56, Math.round(width * 0.05), "#0f172a", contentWidth);
+  drawSubHeadline(ctx, "Statewide party tally", padding, padding + 108, Math.round(width * 0.03), "#475569", contentWidth);
+
+  const top = parties.slice(0, 6);
+  let y = padding + 170;
+  for (const party of top) {
+    drawStatBox(ctx, padding, y, contentWidth, 92, "#ffffff", "#e2e8f0");
+    ctx.fillStyle = party.color ?? "#64748b";
+    ctx.fillRect(padding + 16, y + 16, 12, 60);
+    drawSubHeadline(ctx, shortPartyName(party.party), padding + 44, y + 28, Math.round(width * 0.03), "#0f172a");
+    drawMetricPair(ctx, "Total", formatNumber(party.total), padding + width * 0.42, y + 20, width * 0.15, party.color ?? "#166534");
+    drawMetricPair(ctx, "Won", formatNumber(party.won), padding + width * 0.60, y + 20, width * 0.12, "#0f172a");
+    drawMetricPair(ctx, "Lead", formatNumber(party.leading), padding + width * 0.76, y + 20, width * 0.12, "#0f172a");
+    y += 108;
+  }
+  drawFooterInfo(ctx, ["Powered by OneKerala Results"], padding, height - padding - 90, contentWidth);
+  drawWatermark(ctx, width, height, padding);
+}
+
+function drawBattlegroundShareCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  races: ConstituencySummary[],
+  electionTitle: string,
+  theme: { primary: string; secondary: string }
+) {
+  const padding = Math.round(width * 0.075);
+  const contentWidth = width - padding * 2;
+  drawBrandLine(ctx, padding, padding, contentWidth, theme.primary);
+  drawTitle(ctx, "BATTLEGROUND", padding, padding + 8, Math.round(width * 0.038), "#b45309");
+  drawHeadline(ctx, electionTitle, padding, padding + 56, Math.round(width * 0.05), "#0f172a", contentWidth);
+  drawSubHeadline(ctx, "Top closest races right now", padding, padding + 108, Math.round(width * 0.03), "#475569", contentWidth);
+
+  let y = padding + 170;
+  for (const summary of races.slice(0, 5)) {
+    const severity = battlegroundSeverity(summary);
+    drawStatBox(ctx, padding, y, contentWidth, 96, "#ffffff", "#e2e8f0");
+    const pillWidth = 132;
+    const raceTextWidth = Math.max(200, contentWidth - 36 - pillWidth - 16);
+    drawHeadline(ctx, summary.constituencyName, padding + 18, y + 28, Math.round(width * 0.032), "#0f172a", raceTextWidth);
+    drawSubHeadline(ctx, `${shortPartyName(summary.leadingParty || "Leader")} +${formatNumber(summary.margin)} vs ${shortPartyName(summary.trailingParty || "Runner-up")}`, padding + 18, y + 60, Math.round(width * 0.024), "#475569", raceTextWidth);
+    drawPill(ctx, severity.label, padding + contentWidth - pillWidth - 18, y + 24, severity.label === "Very tight" || severity.label === "Recount risk" ? "#be123c" : "#d97706", "#ffffff", pillWidth);
+    y += 106;
+  }
+
+  drawFooterInfo(ctx, ["Live via OneKerala Results"], padding, height - padding - 90, contentWidth);
+  drawWatermark(ctx, width, height, padding);
+}
+
+function drawVictoryShareCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  outcome: {
+    winner: PartySeatSummary;
+    runnerUp?: PartySeatSummary;
+    totalSeats: number;
+    majorityMark: number;
+    seatLead: number;
+    closest?: ConstituencySummary;
+    biggest?: ConstituencySummary;
+    electionTitle: string;
+  },
+  theme: { primary: string; secondary: string }
+) {
+  const padding = Math.round(width * 0.075);
+  const contentWidth = width - padding * 2;
+  drawBrandLine(ctx, padding, padding, contentWidth, theme.primary);
+  drawTitle(ctx, "FINAL RESULT", padding, padding + 8, Math.round(width * 0.038), theme.secondary);
+  drawHeadline(ctx, outcome.electionTitle, padding, padding + 56, Math.round(width * 0.05), "#0f172a", contentWidth);
+  drawSubHeadline(ctx, "All constituencies declared", padding, padding + 108, Math.round(width * 0.03), "#475569", contentWidth);
+  drawHeadline(ctx, shortPartyName(outcome.winner.party), padding, padding + 220, Math.round(width * 0.11), theme.primary, contentWidth);
+  drawSubHeadline(ctx, `${outcome.winner.party} wins ${formatNumber(outcome.winner.total)} seats`, padding, padding + 282, Math.round(width * 0.036), "#0f172a", contentWidth);
+
+  drawMetricPair(ctx, "Majority", formatNumber(outcome.majorityMark), padding, padding + 380, width * 0.22, "#0f172a");
+  drawMetricPair(ctx, "Seat lead", formatNumber(outcome.seatLead), padding + width * 0.3, padding + 380, width * 0.22, "#d97706");
+  drawMetricPair(ctx, "Runner-up", outcome.runnerUp ? shortPartyName(outcome.runnerUp.party) : "-", padding + width * 0.58, padding + 380, width * 0.22, "#0f172a");
+
+  drawFooterInfo(
+    ctx,
+    [
+      outcome.closest ? `Closest: ${outcome.closest.constituencyName} (${formatNumber(outcome.closest.margin)})` : "",
+      outcome.biggest ? `Biggest: ${outcome.biggest.constituencyName} (${formatNumber(outcome.biggest.margin)})` : "",
+      "Live via OneKerala Results"
+    ].filter(Boolean),
+    padding,
+    height - padding - 126,
+    contentWidth
+  );
+  drawWatermark(ctx, width, height, padding);
+}
+
+function drawBrandLine(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, color: string) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, Math.min(width, 180), 8);
+}
+
+function drawTitle(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color: string) {
+  ctx.fillStyle = color;
+  ctx.font = `900 ${size}px Inter, Arial, sans-serif`;
+  ctx.fillText(text, x, y + size);
+}
+
+function drawHeadline(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color = "#0f172a", maxWidth = 760) {
+  ctx.fillStyle = color;
+  ctx.font = `900 ${size}px Inter, Arial, sans-serif`;
+  wrapText(ctx, text, x, y + size, size * 1.15, maxWidth);
+}
+
+function drawSubHeadline(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, color: string, maxWidth = 780) {
+  ctx.fillStyle = color;
+  ctx.font = `700 ${size}px Inter, Arial, sans-serif`;
+  wrapText(ctx, text, x, y + size, size * 1.3, maxWidth);
+}
+
+function drawPill(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, background: string, color: string, width?: number) {
+  ctx.font = "900 26px Inter, Arial, sans-serif";
+  const pillWidth = width ?? Math.ceil(ctx.measureText(text).width + 34);
+  roundRect(ctx, x, y, pillWidth, 42, 21, background, background);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x + 17, y + 29);
+}
+
+function drawStatBox(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, fill: string, stroke: string) {
+  roundRect(ctx, x, y, width, height, 22, fill, stroke);
+}
+
+function drawMetricPair(ctx: CanvasRenderingContext2D, label: string, value: string, x: number, y: number, maxWidth: number, valueColor: string) {
+  ctx.fillStyle = "#64748b";
+  ctx.font = "800 20px Inter, Arial, sans-serif";
+  ctx.fillText(label.toUpperCase(), x, y);
+  ctx.fillStyle = valueColor;
+  ctx.font = "900 36px Inter, Arial, sans-serif";
+  const shortened = truncateTextToWidth(ctx, value, maxWidth);
+  ctx.fillText(shortened, x, y + 42);
+}
+
+function drawDataRow(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, label: string, candidate: string, party: string, accent: string) {
+  drawStatBox(ctx, x, y, width, 74, "#ffffff", "#e2e8f0");
+  ctx.fillStyle = accent;
+  ctx.font = "900 18px Inter, Arial, sans-serif";
+  ctx.fillText(label.toUpperCase(), x + 18, y + 24);
+  ctx.fillStyle = "#0f172a";
+  ctx.font = "900 28px Inter, Arial, sans-serif";
+  ctx.fillText(truncateText(candidate, 34), x + 18, y + 54);
+  ctx.fillStyle = "#64748b";
+  ctx.font = "700 20px Inter, Arial, sans-serif";
+  ctx.fillText(party, x + width - 18 - Math.min(ctx.measureText(party).width, width * 0.3), y + 54);
+}
+
+function drawFooterInfo(ctx: CanvasRenderingContext2D, lines: string[], x: number, y: number, width: number) {
+  ctx.fillStyle = "#475569";
+  ctx.font = "700 22px Inter, Arial, sans-serif";
+  lines.forEach((line, index) => {
+    ctx.fillText(truncateTextToWidth(ctx, line, width), x, y + index * 30);
+  });
+}
+
+function drawWatermark(ctx: CanvasRenderingContext2D, width: number, height: number, padding: number) {
+  ctx.fillStyle = "rgba(71,85,105,0.85)";
+  ctx.font = "700 18px Inter, Arial, sans-serif";
+  const text = "results.onekeralam.in";
+  const metrics = ctx.measureText(text);
+  ctx.fillText(text, width - padding - metrics.width, height - padding + 8);
+}
+
+async function drawAvatarBlock(
+  ctx: CanvasRenderingContext2D,
+  photoUrl: string | undefined,
+  name: string,
+  x: number,
+  y: number,
+  size: number,
+  ring: string
+) {
+  const image = await loadShareImage(photoUrl);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  if (image) {
+    ctx.drawImage(image, x, y, size, size);
+  } else {
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillRect(x, y, size, size);
+    ctx.fillStyle = "#334155";
+    ctx.font = `900 ${Math.round(size * 0.34)}px Inter, Arial, sans-serif`;
+    const text = initials(name);
+    const metrics = ctx.measureText(text);
+    ctx.fillText(text, x + size / 2 - metrics.width / 2, y + size / 2 + size * 0.12);
+  }
+  ctx.restore();
+  ctx.strokeStyle = ring;
+  ctx.lineWidth = Math.max(4, Math.round(size * 0.04));
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size / 2, size / 2 - 2, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, lineHeight: number, maxWidth: number) {
+  const words = text.split(/\s+/);
+  let line = "";
+  let lineIndex = 0;
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, y + lineIndex * lineHeight);
+      line = word;
+      lineIndex += 1;
+    } else {
+      line = test;
+    }
+  }
+  if (line) ctx.fillText(line, x, y + lineIndex * lineHeight);
+}
+
+function truncateTextToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let value = text;
+  while (value.length > 3 && ctx.measureText(`${value}...`).width > maxWidth) {
+    value = value.slice(0, -1);
+  }
+  return `${value}...`;
+}
+
+function truncateText(value: string, limit: number) {
+  return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  fill: string,
+  stroke: string
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + width, y, x + width, y + height, radius);
+  ctx.arcTo(x + width, y + height, x, y + height, radius);
+  ctx.arcTo(x, y + height, x, y, radius);
+  ctx.arcTo(x, y, x + width, y, radius);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+async function loadShareImage(url?: string): Promise<HTMLImageElement | null> {
+  if (!url) return null;
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = toShareImageUrl(url);
+  });
+}
+
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) return `rgba(15,23,42,${alpha})`;
+  const value = Number.parseInt(normalized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function shareCardFileName(payload: ShareCardPayload, format: ShareCardFormat) {
+  const prefix = payload.kind === "constituency"
+    ? slugify(payload.result.constituencyName)
+    : payload.kind === "party-summary"
+      ? "party-summary"
+      : payload.kind === "battleground"
+        ? "battleground"
+        : "final-result";
+  return `${prefix}-${format}.png`;
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "share-card";
+}
+
+function toShareImageUrl(url: string) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (!/^https?:$/i.test(parsed.protocol)) return parsed.toString();
+    return shareImageProxyUrl(parsed.toString());
+  } catch {
+    return url;
+  }
 }
 
 function isDeclaredWinner(value: string) {

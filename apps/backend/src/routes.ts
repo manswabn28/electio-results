@@ -5,6 +5,7 @@ import { applyDiscoveredSource, getDiscoveryStatus, runSourceDiscovery, setDisco
 import { getSourceConfig, revertSourceConfig, setActiveSourceProfile, toPublicSourceConfig, updateSourceConfig } from "./sourceConfigStore.js";
 import { addChatMessage, deleteChatMessage, getChatMessages, subscribeToChat } from "./chatStore.js";
 import { recordViewer } from "./traffic.js";
+import { createTelegramSubscriptionLink, getTelegramSubscriptionStatus, telegramEnabled } from "./telegramAlerts.js";
 
 export function createApiRouter(): Router {
   const router = express.Router();
@@ -87,9 +88,77 @@ export function createApiRouter(): Router {
     res.json(await getPartySummary(parseProfile(req)));
   }));
 
+  router.get("/telegram/config", asyncHandler(async (_req, res) => {
+    res.json({
+      generatedAt: new Date().toISOString(),
+      enabled: telegramEnabled(),
+      botUsername: process.env.TELEGRAM_BOT_USERNAME || undefined
+    });
+  }));
+
+  router.get("/telegram/status", asyncHandler(async (req, res) => {
+    const viewerId = String(req.query.viewerId ?? "").trim();
+    const profileId = parseProfile(req) ?? "";
+    res.json(await getTelegramSubscriptionStatus(viewerId, profileId));
+  }));
+
+  router.post("/telegram/subscribe-link", asyncHandler(async (req, res) => {
+    res.json(await createTelegramSubscriptionLink({
+      viewerId: String(req.body?.viewerId ?? "").trim(),
+      profileId: String(req.body?.profileId ?? parseProfile(req) ?? "").trim(),
+      selectedIds: Array.isArray(req.body?.selectedIds) ? req.body.selectedIds.map(String) : [],
+      watchedCandidateIds: Array.isArray(req.body?.watchedCandidateIds) ? req.body.watchedCandidateIds.map(String) : [],
+      rules: typeof req.body?.rules === "object" && req.body?.rules ? req.body.rules : undefined
+    }));
+  }));
+
   router.get("/results/details", asyncHandler(async (req, res) => {
     const ids = parseIds(req.query.ids);
     res.json(await getConstituencyResults(ids, parseProfile(req)));
+  }));
+
+  router.get("/share-image", asyncHandler(async (req, res) => {
+    const rawUrl = String(req.query.url ?? "").trim();
+    if (!rawUrl) {
+      res.status(400).json({
+        error: {
+          message: "Image URL is required.",
+          code: "MISSING_IMAGE_URL"
+        }
+      });
+      return;
+    }
+
+    const imageUrl = new URL(rawUrl);
+    if (!["http:", "https:"].includes(imageUrl.protocol) || !/results\.eci\.gov\.in$/i.test(imageUrl.hostname)) {
+      res.status(400).json({
+        error: {
+          message: "Only official ECI image URLs are allowed.",
+          code: "UNSUPPORTED_IMAGE_HOST"
+        }
+      });
+      return;
+    }
+
+    const response = await fetch(imageUrl.toString(), {
+      headers: {
+        accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+      }
+    });
+
+    if (!response.ok) {
+      throw Object.assign(new Error(`Image fetch failed with ${response.status}`), {
+        statusCode: response.status,
+        code: "IMAGE_FETCH_FAILED"
+      });
+    }
+
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=600");
+    res.send(buffer);
   }));
 
   router.post("/traffic/heartbeat", asyncHandler(async (req, res) => {

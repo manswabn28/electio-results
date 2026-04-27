@@ -8,6 +8,7 @@ import { startCachePrewarming } from "./eci/service.js";
 import { logger } from "./logger.js";
 import { createApiRouter } from "./routes.js";
 import { startDiscoveryScheduler } from "./eci/discovery.js";
+import { startTelegramAlerts } from "./telegramAlerts.js";
 
 const app = express();
 const allowedOrigins = new Set(
@@ -50,13 +51,15 @@ app.use((_req, res) => {
 app.listen(config.PORT, () => {
   startDiscoveryScheduler();
   startCachePrewarming();
+  startTelegramAlerts();
   logger.info(
     {
       port: config.PORT,
       sourceConfigured: config.sourceConfigured,
       electionPath: config.ECI_ELECTION_PATH || undefined,
       keralaStatePage: config.ECI_KERALA_STATE_PAGE || undefined,
-      prewarmIntervalSeconds: config.PREWARM_INTERVAL_SECONDS
+      prewarmIntervalSeconds: config.PREWARM_INTERVAL_SECONDS,
+      telegramAlerts: Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_BOT_USERNAME)
     },
     "Kerala election results API listening"
   );

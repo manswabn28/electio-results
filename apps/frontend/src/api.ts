@@ -11,6 +11,9 @@ import type {
   ResultEnvelope,
   SourceDiagnosticsResponse,
   ResultsSummaryResponse,
+  TelegramAlertRules,
+  TelegramSubscriptionLinkResponse,
+  TelegramSubscriptionStatusResponse,
   TrafficResponse
 } from "@kerala-election/shared";
 
@@ -73,6 +76,28 @@ export function fetchSourceConfig() {
 
 export function fetchPartySummary(profileId?: string) {
   return request<PartySummaryResponse>(apiUrl(withProfile("/api/party-summary", profileId)));
+}
+
+export function shareImageProxyUrl(url: string) {
+  return apiUrl(`/api/share-image?url=${encodeURIComponent(url)}`);
+}
+
+export function fetchTelegramSubscriptionStatus(viewerId: string, profileId?: string) {
+  return request<TelegramSubscriptionStatusResponse>(apiUrl(withProfile(`/api/telegram/status?viewerId=${encodeURIComponent(viewerId)}`, profileId)));
+}
+
+export function createTelegramSubscriptionLink(payload: {
+  viewerId: string;
+  profileId: string;
+  selectedIds: string[];
+  watchedCandidateIds?: string[];
+  rules?: Partial<TelegramAlertRules>;
+}) {
+  return request<TelegramSubscriptionLinkResponse>(apiUrl("/api/telegram/subscribe-link"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
 }
 
 export function updateActiveSourceProfile(profileId: string) {
