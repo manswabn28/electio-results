@@ -207,7 +207,7 @@ export function ElectionBattleShareCard({
               <div className="flex min-w-0 items-center gap-4">
                 <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-cyan-300/30 bg-[#0a1730] shadow-[0_0_24px_rgba(34,211,238,0.18)]">
                   {props.logoUrl ? (
-                    <img alt="Logo" className="h-full w-full object-cover" src={props.logoUrl} />
+                    <img alt="Logo" className="h-full w-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" src={props.logoUrl} />
                   ) : (
                     <span className="text-[16px] font-black uppercase text-cyan-200">OK</span>
                   )}
@@ -294,7 +294,7 @@ function CandidateZone({
         ) : null}
         <div className={`absolute top-[18px] h-[190px] w-[190px] overflow-hidden rounded-[22px] border border-white/15 bg-black/20 ${align === "right" ? "right-[65px]" : "left-[65px]"}`}>
           {photoUrl ? (
-            <img alt={candidate} className="h-full w-full object-cover" src={photoUrl} />
+            <img alt={candidate} className="h-full w-full object-cover" crossOrigin="anonymous" referrerPolicy="no-referrer" src={photoUrl} />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-white/10 text-[54px] font-black text-white/90">
               {initials(candidate)}

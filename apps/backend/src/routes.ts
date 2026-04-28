@@ -167,6 +167,12 @@ export function createApiRouter(): Router {
 
     const contentType = response.headers.get("content-type") || "image/jpeg";
     const buffer = Buffer.from(await response.arrayBuffer());
+    const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+    if (requestOrigin) {
+      res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "public, max-age=600");
     res.send(buffer);
