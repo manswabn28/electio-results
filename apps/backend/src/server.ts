@@ -9,6 +9,7 @@ import { logger } from "./logger.js";
 import { createApiRouter } from "./routes.js";
 import { startDiscoveryScheduler } from "./eci/discovery.js";
 import { startTelegramAlerts } from "./telegramAlerts.js";
+import { startHistoryPrewarming } from "./constituencyHistory.js";
 
 const app = express();
 const allowedOrigins = new Set(
@@ -51,6 +52,7 @@ app.use((_req, res) => {
 app.listen(config.PORT, () => {
   startDiscoveryScheduler();
   startCachePrewarming();
+  startHistoryPrewarming();
   startTelegramAlerts();
   logger.info(
     {

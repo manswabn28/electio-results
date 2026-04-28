@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "sources": {
+    "kerala": {
+      "2021": {
+        "statewiseUrl": "https://results.eci.gov.in/Result2021/statewiseS114.htm"
+      }
+    },
+    "tamil-nadu": {
+      "2021": {
+        "statewiseUrl": "https://results.eci.gov.in/Result2021/statewiseS221.htm"
+      }
+    },
+    "west-bengal": {
+      "2021": {
+        "statewiseUrl": "https://results.eci.gov.in/Result2021/statewiseS251.htm"
+      }
+    },
+    "assam": {
+      "2021": {
+        "statewiseUrl": "https://results.eci.gov.in/Result2021/statewiseS031.htm"
+      }
+    },
+    "puducherry": {
+      "2021": {
+        "statewiseUrl": "https://results.eci.gov.in/Result2021/statewiseU051.htm"
+      }
+    }
+  }
+}

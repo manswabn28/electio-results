@@ -2,6 +2,8 @@ import type {
   ChatMessage,
   ChatMessagesResponse,
   CandidatesResponse,
+  ConstituencyElectionHistory,
+  ConstituencyHistoryResponse,
   ConstituenciesResponse,
   ConstituencyResult,
   DiscoveredSource,
@@ -53,6 +55,13 @@ export function fetchConstituencies(profileId?: string) {
 
 export function fetchCandidates(profileId?: string) {
   return request<CandidatesResponse>(apiUrl(withProfile("/api/candidates", profileId)));
+}
+
+export async function fetchConstituencyHistory(ids: string[], profileId?: string): Promise<ConstituencyElectionHistory[]> {
+  if (!ids.length) return [];
+  const params = new URLSearchParams({ ids: ids.join(",") });
+  const response = await request<ConstituencyHistoryResponse>(apiUrl(withProfile(`/api/constituency-history?${params}`, profileId)));
+  return response.histories;
 }
 
 export function fetchSummary(ids: string[], profileId?: string) {

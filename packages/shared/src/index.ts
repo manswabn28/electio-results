@@ -226,6 +226,36 @@ export type TrafficResponse = {
   totalViews: number;
 };
 
+export type ConstituencyElectionHistoryEntry = {
+  year: number;
+  winnerName: string;
+  party: string;
+  alliance?: string;
+  votes?: number;
+  voteSharePercent?: number;
+  runnerUpName: string;
+  runnerUpParty: string;
+  runnerUpVotes?: number;
+  margin: number;
+  turnoutPercent?: number;
+};
+
+export type ConstituencyElectionHistory = {
+  constituencyId: string;
+  constituencyNumber: string;
+  constituencyName: string;
+  trendLabel?: string;
+  contextNote?: string;
+  notableLeaders?: string[];
+  entries: ConstituencyElectionHistoryEntry[];
+};
+
+export type ConstituencyHistoryResponse = {
+  generatedAt: string;
+  profileId?: string;
+  histories: ConstituencyElectionHistory[];
+};
+
 export type ChatMessage = {
   id: string;
   profileId: string;

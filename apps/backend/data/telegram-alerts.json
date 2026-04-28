@@ -1,0 +1,24 @@
+{
+  "subscriptions": [],
+  "pending": [
+    {
+      "code": "d5140e84526e2674afeb3e1eb1a9ccd4",
+      "viewerId": "fb2a5d02-2e6c-47ff-9a21-285e3c0a78f7",
+      "profileId": "bihar-resultacgennov2025",
+      "selectedIds": [
+        "195-agiaon",
+        "171-asthawan",
+        "070-alamnagar"
+      ],
+      "watchedCandidateIds": [],
+      "rules": {
+        "leadChange": true,
+        "winnerDeclared": true,
+        "marginBelow500": true,
+        "majorityCrossed": true
+      },
+      "createdAt": "2026-04-28T07:32:59.685Z"
+    }
+  ],
+  "lastAlertAtByKey": {}
+}

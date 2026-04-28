@@ -6,6 +6,8 @@ import { getSourceConfig, revertSourceConfig, setActiveSourceProfile, toPublicSo
 import { addChatMessage, deleteChatMessage, getChatMessages, subscribeToChat } from "./chatStore.js";
 import { recordViewer } from "./traffic.js";
 import { createTelegramSubscriptionLink, getTelegramSubscriptionStatus, telegramEnabled } from "./telegramAlerts.js";
+import { config } from "./config.js";
+import { getConstituencyHistories } from "./constituencyHistory.js";
 
 export function createApiRouter(): Router {
   const router = express.Router();
@@ -79,6 +81,15 @@ export function createApiRouter(): Router {
     res.json(await getCandidateIndex(parseProfile(req)));
   }));
 
+  router.get("/constituency-history", asyncHandler(async (req, res) => {
+    const ids = parseIds(req.query.ids);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      profileId: parseProfile(req),
+      histories: await getConstituencyHistories(ids, parseProfile(req))
+    });
+  }));
+
   router.get("/results/summary", asyncHandler(async (req, res) => {
     const ids = parseIds(req.query.ids);
     res.json(await getSummary(ids, parseProfile(req)));
@@ -92,7 +103,7 @@ export function createApiRouter(): Router {
     res.json({
       generatedAt: new Date().toISOString(),
       enabled: telegramEnabled(),
-      botUsername: process.env.TELEGRAM_BOT_USERNAME || undefined
+      botUsername: config.TELEGRAM_BOT_USERNAME || undefined
     });
   }));
 
