@@ -1,5 +1,5 @@
-const SITE_NAME = "Kerala Assembly Election 2026 Live Tracker";
-const DEFAULT_DESCRIPTION = "Track live Kerala Assembly Election results for selected constituencies with ECI-backed candidate results, party summary, and watch mode.";
+const SITE_NAME = "OneKerala Results";
+const DEFAULT_DESCRIPTION = "Track live assembly election results with constituency-level updates, party summary, battleground races, and shareable result pages.";
 
 type SeoInput = {
   title?: string;
@@ -48,7 +48,7 @@ export function applySeo({
   setJsonLd("organization-schema", {
     "@context": "https://schema.org",
     "@type": "Organization",
-    name: "Kerala Election Live Tracker",
+    name: "OneKerala Results",
     url: canonicalFor("/")
   });
   setJsonLd("webpage-schema", {

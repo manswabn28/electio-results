@@ -25,6 +25,7 @@ import type { ConstituencyDetailCandidate, ConstituencyDetailResponse } from "@k
 import { fetchConstituencyDetail, shareImageProxyUrl } from "./api";
 import { applySeo } from "./seo";
 import { trackPageView } from "./analytics";
+import { Footer } from "./Footer";
 
 export type ConstituencyDetailPageProps = {
   stateSlug: string;
@@ -35,6 +36,7 @@ export type ConstituencyDetailPageProps = {
   onToggleWatchlist: (constituencyId: string) => void;
   onGenerateShareCard: (detail: ConstituencyDetailResponse) => void;
   onOpenAlerts?: () => void;
+  onNavigate?: (path: string) => void;
 };
 
 export function ConstituencyDetailPage({
@@ -45,7 +47,8 @@ export function ConstituencyDetailPage({
   onBack,
   onToggleWatchlist,
   onGenerateShareCard,
-  onOpenAlerts
+  onOpenAlerts,
+  onNavigate
 }: ConstituencyDetailPageProps) {
   const detailQuery = useQuery({
     queryKey: ["constituency-detail", profileId, stateSlug, constituencySlug],
@@ -175,6 +178,7 @@ export function ConstituencyDetailPage({
           </div>
         </div>
       </main>
+      <Footer navigate={onNavigate} />
     </div>
   );
 }

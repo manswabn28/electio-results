@@ -13,6 +13,10 @@ import { ElectionBattleShareCard } from "./ElectionBattleShareCard";
 import { buildElectionBattleShareCardPropsFromResult } from "./shareCardExport";
 import { FinalVictoryShareCard, PartySummaryShareCard } from "./SharePremiumCards";
 import { ConstituencyDetailPage } from "./ConstituencyDetailPage";
+import { Footer } from "./Footer";
+import { AboutUsPage } from "./AboutUsPage";
+import { ContactUsPage } from "./ContactUsPage";
+import { TermsAndConditionsPage } from "./TermsAndConditionsPage";
 
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
@@ -93,7 +97,10 @@ type AppView = "dashboard" | "help";
 type AppRoute =
   | { kind: "dashboard" }
   | { kind: "help" }
-  | { kind: "constituency"; stateSlug: string; constituencySlug: string };
+  | { kind: "constituency"; stateSlug: string; constituencySlug: string }
+  | { kind: "about" }
+  | { kind: "contact" }
+  | { kind: "terms" };
 type ShareCardFormat = "square" | "story" | "landscape";
 type ShareCardPayload =
   | {
@@ -1299,14 +1306,33 @@ export function App() {
     trackEvent("help_close");
   };
 
+  const navigateToPath = (path: string) => {
+    if (typeof window === "undefined") return;
+    window.history.pushState(null, "", path);
+    setAppRoute(parseAppRouteFromLocation());
+  };
+
   if (appView === "help") {
     return (
       <HelpPage
         activeProfileTitle={activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"}
         refreshSeconds={sourceConfigQuery.data?.refreshIntervalSeconds ?? 30}
         onBack={closeHelpPage}
+        onNavigate={navigateToPath}
       />
     );
+  }
+
+  if (appRoute.kind === "about") {
+    return <AboutUsPage onBack={() => navigateToPath("/")} onNavigate={navigateToPath} />;
+  }
+
+  if (appRoute.kind === "contact") {
+    return <ContactUsPage onBack={() => navigateToPath("/")} onNavigate={navigateToPath} />;
+  }
+
+  if (appRoute.kind === "terms") {
+    return <TermsAndConditionsPage onBack={() => navigateToPath("/")} onNavigate={navigateToPath} />;
   }
 
   if (appRoute.kind === "constituency") {
@@ -1318,11 +1344,7 @@ export function App() {
           profileId={detailProfileId}
           watchedIds={detailProfileId && detailProfileId !== effectiveProfileId ? (selectedIdsByProfile[detailProfileId] ?? []) : selectedIds}
           onBack={() => {
-            const url = new URL(window.location.href);
-            url.pathname = "/";
-            url.search = "";
-            window.history.pushState(null, "", url);
-            setAppRoute({ kind: "dashboard" });
+            navigateToPath("/");
           }}
           onToggleWatchlist={(constituencyId) => {
             setSelectedIds((current) => current.includes(constituencyId)
@@ -1335,6 +1357,7 @@ export function App() {
             partyColorsByKey
           ))}
           onOpenAlerts={() => telegramLinkMutation.mutate()}
+          onNavigate={navigateToPath}
         />
         {shareCardPayload && <ShareCardModal payload={shareCardPayload} onClose={() => setShareCardPayload(null)} />}
       </>
@@ -1741,6 +1764,7 @@ export function App() {
           )}
         </div>
       </section>
+      <Footer navigate={navigateToPath} />
       <PartySummaryDock
         parties={partySummaryQuery.data?.parties ?? []}
         checkedAt={partySummaryQuery.dataUpdatedAt}
@@ -2322,7 +2346,7 @@ function CandidateWatchlist({
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
                   <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
-                    {shortPartyName(candidate.party)} Ã‚· {candidate.constituencyName} ({candidate.constituencyNumber})
+                    {shortPartyName(candidate.party)} · {candidate.constituencyName} ({candidate.constituencyNumber})
                   </div>
                 </div>
               </div>
@@ -2467,7 +2491,7 @@ function WatchProfiles({
 function DiagnosticsMini({ total, fresh, cached, stale, failed }: { total: number; fresh: number; cached: number; stale: number; failed: number }) {
   return (
     <div className="mt-3 rounded-md border border-zinc-200 px-2 py-1.5 text-[10px] font-bold text-zinc-500 dark:border-zinc-800" title="Fetched / cached / stale / failed cards">
-      Data {fresh}/{total} fresh Ã‚· {cached} cached Ã‚· {stale} stale Ã‚· {failed} failed
+      Data {fresh}/{total} fresh · {cached} cached · {stale} stale · {failed} failed
     </div>
   );
 }
@@ -2693,7 +2717,7 @@ function CommunityChatPanel({
                   aria-label="Open emoji picker"
                   onClick={() => setEmojiOpen((current) => !current)}
                 >
-                  <span className="text-lg leading-none">ðŸ™‚</span>
+                  <span className="text-lg leading-none">🙂</span>
                 </button>
                 <textarea
                   id="chat-message"
@@ -3220,10 +3244,10 @@ function SourceDiscoveryAdmin({
       <div className="mt-2 text-[11px] leading-4 text-zinc-500">
         {status?.message ?? "Backend discovery will scan official ECI result links, build available assembly profiles, and validate candidate pages before applying."}
       </div>
-      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} Ã‚· Confidence {status.confidence}%</div>}
+      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} · Confidence {status.confidence}%</div>}
       {status?.constituencyListUrl && (
         <div className="mt-2 truncate text-[10px] text-zinc-500" title={status.constituencyListUrl}>
-          Found: {status.constituencyCount ?? 0} seats Ã‚· {status.sampleVerified ? "details verified" : "details pending"}
+          Found: {status.constituencyCount ?? 0} seats · {status.sampleVerified ? "details verified" : "details pending"}
         </div>
       )}
       {status?.checkedAt && (
@@ -3234,7 +3258,7 @@ function SourceDiscoveryAdmin({
             ["Samples", Boolean(status.sampleVerified)]
           ].map(([label, ok]) => (
             <div key={String(label)} className={`rounded-md px-2 py-1 text-center text-[10px] font-black ${ok ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"}`}>
-              {ok ? "OK" : "Wait"} Ã‚· {label}
+              {ok ? "OK" : "Wait"} · {label}
             </div>
           ))}
         </div>
@@ -3243,7 +3267,7 @@ function SourceDiscoveryAdmin({
         <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-[10px] leading-4 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
           <div className="font-black uppercase tracking-wide">Auto-apply report</div>
           <div>Applied: {status.appliedAt ? new Date(status.appliedAt).toLocaleString() : "-"}</div>
-          <div>Confidence: {status.confidence}% Ã‚· Seats: {status.constituencyCount ?? 0} Ã‚· Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
+          <div>Confidence: {status.confidence}% · Seats: {status.constituencyCount ?? 0} · Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
           <div className="mt-1 truncate" title={status.constituencyListUrl}>List: {status.constituencyListUrl}</div>
           <div className="truncate" title={status.candidateDetailUrlTemplate}>Detail: {status.candidateDetailUrlTemplate}</div>
           {status.partySummaryUrl && <div className="truncate" title={status.partySummaryUrl}>Summary: {status.partySummaryUrl}</div>}
@@ -3341,7 +3365,7 @@ function DiscoveryTrailDialog({
                     <div className="mt-1 truncate" title={profile.constituencyListUrl}>Constituencies: {profile.constituencyListUrl}</div>
                     <div className="truncate" title={profile.candidateDetailUrlTemplate}>Candidates: {profile.candidateDetailUrlTemplate}</div>
                     {profile.partySummaryUrl && <div className="truncate" title={profile.partySummaryUrl}>Summary: {profile.partySummaryUrl}</div>}
-                    <div className="mt-1">Seats {profile.constituencyCount} Ã‚· Confidence {profile.confidence}% Ã‚· {profile.sampleVerified ? "verified" : "needs review"}</div>
+                    <div className="mt-1">Seats {profile.constituencyCount} · Confidence {profile.confidence}% · {profile.sampleVerified ? "verified" : "needs review"}</div>
                   </div>
                 ))}
               </div>
@@ -3384,7 +3408,7 @@ function DeploymentReadinessPanel({
         <div>
           <div className="text-xs font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-300">Deployment readiness</div>
           <div className="mt-1 text-[11px] font-semibold text-zinc-500">
-            API {apiBaseForDiagnostics()} Ã‚· TTL {diagnostics?.cacheTtlSeconds ?? "-"}s Ã‚· Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
+            API {apiBaseForDiagnostics()} · TTL {diagnostics?.cacheTtlSeconds ?? "-"}s · Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
           </div>
         </div>
         <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onRun} disabled={isLoading} type="button">
@@ -3754,7 +3778,7 @@ function BattlegroundStrip({
     <section className="mb-5 rounded-md border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 p-4 dark:border-amber-900 dark:from-amber-950/40 dark:via-zinc-950 dark:to-rose-950/30">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">ðŸ”¥ Battleground Races</div>
+          <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">Battleground Races</div>
           <div className="mt-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">Closest contests updated live</div>
         </div>
         <div className="flex items-center gap-2 self-start">
@@ -3843,7 +3867,7 @@ function BattlegroundModal({
       >
         <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
           <div>
-            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">ðŸ”¥ Battleground Races</div>
+            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">Battleground Races</div>
             <h2 className="mt-1 text-xl font-black text-zinc-950 dark:text-white">Top 20 closest races right now</h2>
             <div className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Smallest margins, lead changes, and recount-risk seats in one place.</div>
           </div>
@@ -4032,11 +4056,13 @@ function ShareCardModal({ payload, onClose }: { payload: ShareCardPayload; onClo
 function HelpPage({
   activeProfileTitle,
   refreshSeconds,
-  onBack
+  onBack,
+  onNavigate
 }: {
   activeProfileTitle: string;
   refreshSeconds: number;
   onBack: () => void;
+  onNavigate: (path: string) => void;
 }) {
   return (
     <main className="min-h-screen bg-white text-zinc-950 dark:bg-zinc-950 dark:text-white">
@@ -4387,6 +4413,7 @@ function HelpPage({
           />
         </HelpSection>
       </section>
+      <Footer navigate={onNavigate} />
     </main>
   );
 }
@@ -4686,7 +4713,7 @@ function ResultCard({
         <div className="relative h-4 overflow-hidden rounded-b-md bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
           <div className="h-full bg-gradient-to-r from-emerald-700 via-teal-500 to-sky-500" style={{ width: `${countingPercent}%` }} />
           <div className="absolute inset-0 flex items-center justify-center text-[10px] font-normal text-white">
-            Counting: {countingPercent}% Ã‚· R{roundProgress.current}/{roundProgress.total}
+            Counting: {countingPercent}% · R{roundProgress.current}/{roundProgress.total}
           </div>
         </div>
       )}
@@ -4904,7 +4931,7 @@ function TimelinePlayback({
               <div className="text-[10px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Replay point</div>
               <div className="mt-2 text-2xl font-black text-zinc-950 dark:text-white">{active.leader}</div>
               <div className="mt-1 text-sm font-bold text-zinc-600 dark:text-zinc-300">{shortPartyName(active.party)} leads by {formatNumber(active.margin)}</div>
-              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} Ã‚· {new Date(active.at).toLocaleTimeString()}</div>
+              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} · {new Date(active.at).toLocaleTimeString()}</div>
             </div>
           ) : (
             <div className="rounded-md border border-dashed border-zinc-300 p-6 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700">
@@ -6209,6 +6236,9 @@ function slugify(value: string) {
 function parseAppRouteFromLocation(): AppRoute {
   if (typeof window === "undefined") return { kind: "dashboard" };
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/about-us") return { kind: "about" };
+  if (path === "/contact-us") return { kind: "contact" };
+  if (path === "/terms-and-conditions") return { kind: "terms" };
   const match = path.match(/^\/constituency\/([^/]+)\/([^/]+)$/i);
   if (match) {
     return {
