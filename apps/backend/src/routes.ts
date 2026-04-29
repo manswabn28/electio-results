@@ -151,12 +151,29 @@ export function createApiRouter(): Router {
       return;
     }
 
-    const response = await fetch(imageUrl.toString(), {
-      headers: {
-        accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-      }
+    const browserHeaders = {
+      accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+      origin: imageUrl.origin,
+      referer: `${imageUrl.origin}/`,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    };
+
+    let response = await fetch(imageUrl.toString(), {
+      headers: browserHeaders
     });
+
+    if (response.status === 403) {
+      response = await fetch(imageUrl.toString(), {
+        headers: {
+          ...browserHeaders,
+          referer: "https://results.eci.gov.in/",
+          origin: "https://results.eci.gov.in"
+        }
+      });
+    }
 
     if (!response.ok) {
       throw Object.assign(new Error(`Image fetch failed with ${response.status}`), {

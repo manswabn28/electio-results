@@ -2,6 +2,20 @@
   "subscriptions": [],
   "pending": [
     {
+      "code": "eae6173cb3108dd8c7a5e219b4edbec5",
+      "viewerId": "3aba8112-0d40-4465-a5ea-a0dba2600768",
+      "profileId": "bihar-resultacgennov2025",
+      "selectedIds": [],
+      "watchedCandidateIds": [],
+      "rules": {
+        "leadChange": true,
+        "winnerDeclared": true,
+        "marginBelow500": true,
+        "majorityCrossed": true
+      },
+      "createdAt": "2026-04-28T20:31:55.105Z"
+    },
+    {
       "code": "d5140e84526e2674afeb3e1eb1a9ccd4",
       "viewerId": "fb2a5d02-2e6c-47ff-9a21-285e3c0a78f7",
       "profileId": "bihar-resultacgennov2025",
