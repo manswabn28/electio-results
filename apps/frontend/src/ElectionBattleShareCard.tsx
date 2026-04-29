@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { MapPin, ShieldCheck, Zap } from "lucide-react";
+﻿import type { ReactNode } from "react";
+import { Crown, MapPin, ShieldCheck, Zap } from "lucide-react";
 
 export type ElectionBattleShareCardProps = {
   electionTitle: string;
@@ -40,12 +40,15 @@ export function ElectionBattleShareCard({
   const countedRounds = Math.max(0, Math.min(props.roundsCounted || 0, totalRounds));
   const leftLeading = props.leadingSide === "left";
   const countingCompleted = totalRounds > 0 && countedRounds >= totalRounds;
+  const resultDeclared = countingCompleted || /\b(won|winner|result\s+declared|declared)\b/i.test(props.statusText);
   const leftGlow = cssColorToRgba(props.leftPartyColor, 0.42, "rgba(255,30,30,0.46)");
   const rightGlow = cssColorToRgba(props.rightPartyColor, 0.38, "rgba(0,210,90,0.38)");
   const constituency = clampText(props.constituencyName.toUpperCase(), 20);
   const constituencySize = fitConstituencyFontSize(constituency);
-  const electionTitle = clampText(props.electionTitle.toUpperCase(), 34);
+  const electionTitle = props.electionTitle.toUpperCase();
   const statusText = clampText(props.statusText.toUpperCase(), 24);
+  const titleLines = wrapTitleLines(electionTitle, 22, 2);
+  const titleSize = fitElectionTitleFontSize(electionTitle);
 
   return (
     <div className={`mx-auto ${className}`} style={{ width: CANVAS_SIZE * previewScale }}>
@@ -78,8 +81,14 @@ export function ElectionBattleShareCard({
           <Zone x={280} y={22} w={520} h={60}>
             <div className="flex h-full items-center justify-center gap-5">
               <span className="h-px w-16 bg-white/18" />
-              <div className="max-w-[360px] truncate text-center font-black uppercase tracking-[0.34em] text-white/90" style={{ fontSize: 20 }}>
-                {electionTitle}
+              <div
+                className="max-w-[420px] text-center font-black uppercase leading-[1.05] tracking-[0.24em] text-white/90"
+                style={{ fontSize: titleSize }}
+                title={props.electionTitle}
+              >
+                {titleLines.map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
               </div>
               <span className="h-px w-16 bg-white/18" />
             </div>
@@ -130,6 +139,7 @@ export function ElectionBattleShareCard({
             votes={props.leftVotes}
             photoUrl={props.leftCandidatePhoto}
             leading={leftLeading}
+            won={resultDeclared && leftLeading}
             tone="left"
             animated={animated}
           />
@@ -137,7 +147,7 @@ export function ElectionBattleShareCard({
           <Zone x={370} y={365} w={340} h={360}>
             <div className="relative h-full w-full">
               <div className={`absolute left-1/2 top-[118px] -translate-x-1/2 text-center text-[88px] font-black italic leading-none text-white drop-shadow-[0_0_18px_rgba(103,232,249,0.58)] ${animated ? "animate-pulse" : ""}`}>VS</div>
-              <LeadMarginPanel margin={props.leadMargin} />
+              <LeadMarginPanel margin={props.leadMargin} won={resultDeclared} />
             </div>
           </Zone>
 
@@ -152,6 +162,7 @@ export function ElectionBattleShareCard({
             votes={props.rightVotes}
             photoUrl={props.rightCandidatePhoto}
             leading={!leftLeading}
+            won={resultDeclared && !leftLeading}
             tone="right"
             align="right"
             animated={animated}
@@ -243,6 +254,7 @@ function CandidateZone({
   votes,
   photoUrl,
   leading,
+  won,
   tone,
   align = "left",
   animated
@@ -257,6 +269,7 @@ function CandidateZone({
   votes: number;
   photoUrl?: string;
   leading: boolean;
+  won?: boolean;
   tone: "left" | "right";
   align?: "left" | "right";
   animated: boolean;
@@ -289,7 +302,7 @@ function CandidateZone({
             className="absolute left-6 top-[205px] rounded-[8px] px-4 py-2 text-[24px] font-black uppercase text-white"
             style={{ backgroundColor: badgeColor }}
           >
-            LEADING
+            {won ? "WON" : "LEADING"}
           </div>
         ) : null}
         <div className={`absolute top-[18px] h-[190px] w-[190px] overflow-hidden rounded-[22px] border border-white/15 bg-black/20 ${align === "right" ? "right-[65px]" : "left-[65px]"}`}>
@@ -301,30 +314,36 @@ function CandidateZone({
             </div>
           )}
         </div>
-        <div className={`absolute left-[30px] top-[258px] w-[260px] overflow-hidden ${align === "right" ? "text-right" : "text-left"}`}>
+        {won ? (
+          <div
+            className={`absolute top-[12px] z-10 flex h-[42px] w-[42px] items-center justify-center rounded-full border border-yellow-300/80 bg-yellow-400 text-yellow-950 shadow-[0_10px_24px_rgba(234,179,8,0.35)] ${align === "right" ? "right-[36px]" : "left-[36px]"}`}
+          >
+            <Crown className="h-6 w-6 fill-current" />
+          </div>
+        ) : null}
+        <div className={`absolute left-[30px] top-[242px] w-[260px] overflow-hidden ${align === "right" ? "text-right" : "text-left"}`}>
           <div className="truncate font-black uppercase leading-none text-white" style={{ fontSize: partySize }}>
             {partyCode}
           </div>
-          <div className="mt-3 h-[54px] overflow-hidden text-[22px] font-bold uppercase leading-[1.12] tracking-wide text-white/90">
+          <div className="mt-2 h-[48px] overflow-hidden text-[21px] font-bold uppercase leading-[1.06] tracking-wide text-white/90">
             {candidateLines.map((line) => (
               <div key={line} className={align === "right" ? "text-right" : "text-left"}>{line}</div>
             ))}
           </div>
-          <div className={`mt-3 h-[6px] w-[64px] rounded-full ${align === "right" ? "ml-auto" : ""}`} style={{ backgroundColor: underlineColor }} />
-          <div className="mt-4 truncate text-[62px] font-black leading-none text-white">{voteText}</div>
-          <div className="mt-1 text-[22px] font-black uppercase tracking-[0.16em] text-white/76">VOTES</div>
+          <div className="mt-1 truncate text-[21px] font-bold leading-tight tracking-wide text-white">{voteText}</div>
+          <div className={`mt-1.5 h-[6px] w-[64px] rounded-full ${align === "right" ? "ml-auto" : ""}`} style={{ backgroundColor: underlineColor }} />
         </div>
       </div>
     </Zone>
   );
 }
 
-function LeadMarginPanel({ margin }: { margin: number }) {
+function LeadMarginPanel({ margin, won = false }: { margin: number; won?: boolean }) {
   const marginText = `+${formatIndianNumber(margin)}`;
   return (
     <div className="absolute left-0 top-[225px] h-[135px] w-[340px] rounded-[22px] border border-yellow-400/80 bg-[#08121f] px-4 py-4 text-center shadow-[0_0_24px_rgba(234,179,8,0.18)]">
       <div className="absolute inset-[12px] rounded-[16px] border border-dashed border-yellow-400/50" />
-      <div className="relative text-[20px] font-black uppercase tracking-[0.16em] text-yellow-100">LEAD MARGIN</div>
+      <div className="relative text-[20px] font-black uppercase tracking-[0.16em] text-yellow-100">{won ? "WON MARGIN" : "LEAD MARGIN"}</div>
       <div className="relative mt-2 truncate text-[64px] font-black leading-none text-yellow-300">{marginText}</div>
       <div className="relative mt-2 text-[24px] font-black uppercase tracking-[0.18em] text-white/78">VOTES</div>
     </div>
@@ -359,10 +378,41 @@ function fitConstituencyFontSize(value: string) {
   return 56;
 }
 
+function fitElectionTitleFontSize(value: string) {
+  if (value.length <= 22) return 20;
+  if (value.length <= 34) return 18;
+  return 16;
+}
+
 function fitPartyFontSize(value: string) {
   if (value.length <= 4) return 58;
   if (value.length <= 7) return 42;
   return 34;
+}
+
+function wrapTitleLines(value: string, limit: number, maxLines: number) {
+  const words = value.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= limit || !current) {
+      current = next;
+      continue;
+    }
+    lines.push(current);
+    current = word;
+    if (lines.length === maxLines - 1) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  const output = lines.slice(0, maxLines);
+  if (!output.length) return [value];
+  const original = words.join(" ");
+  const used = output.join(" ");
+  if (used.length < original.length) {
+    output[output.length - 1] = clampText(output[output.length - 1], limit);
+  }
+  return output;
 }
 
 function fitStatusFontSize(value: string) {

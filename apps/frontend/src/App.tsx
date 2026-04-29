@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import EmojiPicker, { Theme } from "emoji-picker-react";
 import { toBlob as toImageBlob } from "html-to-image";
@@ -2255,7 +2255,7 @@ function CandidateWatchlist({
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-zinc-950 dark:text-white">{candidate.candidateName}</div>
                   <div className="mt-0.5 truncate text-xs font-semibold text-zinc-500">
-                    {shortPartyName(candidate.party)} Â� {candidate.constituencyName} ({candidate.constituencyNumber})
+                    {shortPartyName(candidate.party)} Ã‚· {candidate.constituencyName} ({candidate.constituencyNumber})
                   </div>
                 </div>
               </div>
@@ -2400,7 +2400,7 @@ function WatchProfiles({
 function DiagnosticsMini({ total, fresh, cached, stale, failed }: { total: number; fresh: number; cached: number; stale: number; failed: number }) {
   return (
     <div className="mt-3 rounded-md border border-zinc-200 px-2 py-1.5 text-[10px] font-bold text-zinc-500 dark:border-zinc-800" title="Fetched / cached / stale / failed cards">
-      Data {fresh}/{total} fresh Â� {cached} cached Â� {stale} stale Â� {failed} failed
+      Data {fresh}/{total} fresh Ã‚· {cached} cached Ã‚· {stale} stale Ã‚· {failed} failed
     </div>
   );
 }
@@ -2535,7 +2535,7 @@ function CommunityChatPanel({
               <h2 className="truncate text-sm font-black text-zinc-950 dark:text-white">Community chat</h2>
               <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">
                 {formatNumber(messages.filter((message) => !message.deleted).length)} messages
-                {unreadCount > 0 ? ` � ${formatNumber(unreadCount)} new` : ""}
+                {unreadCount > 0 ? ` · ${formatNumber(unreadCount)} new` : ""}
               </div>
             </div>
             <button className="btn-press rounded-md border border-zinc-300 p-1.5 dark:border-zinc-700" onClick={() => onOpenChange(false)} type="button" aria-label="Minimize chat">
@@ -2626,7 +2626,7 @@ function CommunityChatPanel({
                   aria-label="Open emoji picker"
                   onClick={() => setEmojiOpen((current) => !current)}
                 >
-                  <span className="text-lg leading-none">🙂</span>
+                  <span className="text-lg leading-none">ðŸ™‚</span>
                 </button>
                 <textarea
                   id="chat-message"
@@ -3153,10 +3153,10 @@ function SourceDiscoveryAdmin({
       <div className="mt-2 text-[11px] leading-4 text-zinc-500">
         {status?.message ?? "Backend discovery will scan official ECI result links, build available assembly profiles, and validate candidate pages before applying."}
       </div>
-      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} Â� Confidence {status.confidence}%</div>}
+      {status?.checkedAt && <div className="mt-1 text-[10px] font-semibold text-zinc-500">Last check {new Date(status.checkedAt).toLocaleString()} Ã‚· Confidence {status.confidence}%</div>}
       {status?.constituencyListUrl && (
         <div className="mt-2 truncate text-[10px] text-zinc-500" title={status.constituencyListUrl}>
-          Found: {status.constituencyCount ?? 0} seats Â� {status.sampleVerified ? "details verified" : "details pending"}
+          Found: {status.constituencyCount ?? 0} seats Ã‚· {status.sampleVerified ? "details verified" : "details pending"}
         </div>
       )}
       {status?.checkedAt && (
@@ -3167,7 +3167,7 @@ function SourceDiscoveryAdmin({
             ["Samples", Boolean(status.sampleVerified)]
           ].map(([label, ok]) => (
             <div key={String(label)} className={`rounded-md px-2 py-1 text-center text-[10px] font-black ${ok ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"}`}>
-              {ok ? "OK" : "Wait"} Â� {label}
+              {ok ? "OK" : "Wait"} Ã‚· {label}
             </div>
           ))}
         </div>
@@ -3176,7 +3176,7 @@ function SourceDiscoveryAdmin({
         <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-[10px] leading-4 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
           <div className="font-black uppercase tracking-wide">Auto-apply report</div>
           <div>Applied: {status.appliedAt ? new Date(status.appliedAt).toLocaleString() : "-"}</div>
-          <div>Confidence: {status.confidence}% Â� Seats: {status.constituencyCount ?? 0} Â� Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
+          <div>Confidence: {status.confidence}% Ã‚· Seats: {status.constituencyCount ?? 0} Ã‚· Detail check: {status.sampleVerified ? "passed" : "not verified"}</div>
           <div className="mt-1 truncate" title={status.constituencyListUrl}>List: {status.constituencyListUrl}</div>
           <div className="truncate" title={status.candidateDetailUrlTemplate}>Detail: {status.candidateDetailUrlTemplate}</div>
           {status.partySummaryUrl && <div className="truncate" title={status.partySummaryUrl}>Summary: {status.partySummaryUrl}</div>}
@@ -3274,7 +3274,7 @@ function DiscoveryTrailDialog({
                     <div className="mt-1 truncate" title={profile.constituencyListUrl}>Constituencies: {profile.constituencyListUrl}</div>
                     <div className="truncate" title={profile.candidateDetailUrlTemplate}>Candidates: {profile.candidateDetailUrlTemplate}</div>
                     {profile.partySummaryUrl && <div className="truncate" title={profile.partySummaryUrl}>Summary: {profile.partySummaryUrl}</div>}
-                    <div className="mt-1">Seats {profile.constituencyCount} Â� Confidence {profile.confidence}% Â� {profile.sampleVerified ? "verified" : "needs review"}</div>
+                    <div className="mt-1">Seats {profile.constituencyCount} Ã‚· Confidence {profile.confidence}% Ã‚· {profile.sampleVerified ? "verified" : "needs review"}</div>
                   </div>
                 ))}
               </div>
@@ -3317,7 +3317,7 @@ function DeploymentReadinessPanel({
         <div>
           <div className="text-xs font-black uppercase tracking-wide text-zinc-600 dark:text-zinc-300">Deployment readiness</div>
           <div className="mt-1 text-[11px] font-semibold text-zinc-500">
-            API {apiBaseForDiagnostics()} Â� TTL {diagnostics?.cacheTtlSeconds ?? "-"}s Â� Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
+            API {apiBaseForDiagnostics()} Ã‚· TTL {diagnostics?.cacheTtlSeconds ?? "-"}s Ã‚· Uptime {diagnostics ? formatDuration(diagnostics.uptimeSeconds) : "-"}
           </div>
         </div>
         <button className="btn-press rounded-md border border-zinc-300 px-2 py-1.5 text-xs font-black dark:border-zinc-700" onClick={onRun} disabled={isLoading} type="button">
@@ -3687,7 +3687,7 @@ function BattlegroundStrip({
     <section className="mb-5 rounded-md border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 p-4 dark:border-amber-900 dark:from-amber-950/40 dark:via-zinc-950 dark:to-rose-950/30">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">🔥 Battleground Races</div>
+          <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">ðŸ”¥ Battleground Races</div>
           <div className="mt-1 text-sm font-semibold text-zinc-600 dark:text-zinc-300">Closest contests updated live</div>
         </div>
         <div className="flex items-center gap-2 self-start">
@@ -3776,7 +3776,7 @@ function BattlegroundModal({
       >
         <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
           <div>
-            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">🔥 Battleground Races</div>
+            <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">ðŸ”¥ Battleground Races</div>
             <h2 className="mt-1 text-xl font-black text-zinc-950 dark:text-white">Top 20 closest races right now</h2>
             <div className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Smallest margins, lead changes, and recount-risk seats in one place.</div>
           </div>
@@ -3876,7 +3876,12 @@ function ShareCardModal({ payload, onClose }: { payload: ShareCardPayload; onClo
       } else {
         const file = new File([blob], fileName, { type: "image/png" });
         if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-          await navigator.share({ files: [file], title: title });
+          await navigator.share({
+            files: [file],
+            title: title,
+            text: "Track live results at https://results.onekeralam.in/",
+            url: "https://results.onekeralam.in/"
+          });
         } else {
           downloadBlob(blob, fileName);
         }
@@ -4533,34 +4538,36 @@ function ResultCard({
         )}
         <div className="mt-4 grid min-w-0 grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:gap-3">
           <CandidatePhoto candidateName={leaderName} photoUrl={leader?.photoUrl} size="large" tone="leading" crowned={declared} suppressImage={lowBandwidthMode} />
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-0.5">
             <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
               <ArrowUp className="h-3.5 w-3.5" />
-              Leading
+              {declared ? "Won" : "Leading"}
             </div>
-            <div className="mt-1 truncate text-base font-black text-zinc-950 dark:text-white" title={leaderName}>{leaderName}</div>
-            <div className="truncate text-sm font-semibold text-zinc-600 dark:text-zinc-300" title={leaderParty}>{leaderParty}</div>
+            <div className="truncate text-[15px] font-black leading-tight text-zinc-950 dark:text-white" title={leaderName}>{leaderName}{declared ? <span className="ml-1 text-amber-500"> ♛</span> : null}</div>
+            <div className={`truncate text-sm font-bold leading-tight text-zinc-950 dark:text-white ${leaderVotesChanged ? "animate-value-change" : ""}`}>{formatNumber(leader?.totalVotes ?? 0)}</div>
+            <div className="truncate text-sm font-semibold leading-tight text-zinc-600 dark:text-zinc-300" title={leaderParty}>{leaderParty}</div>
           </div>
           <div className="min-w-[72px] shrink-0 text-right">
-            <div className={`text-xs font-semibold uppercase tracking-wide ${closeFight ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}`}>{veryCloseFight ? "Alert lead" : closeFight ? "Tight lead" : "Lead"}</div>
+            <div className={`text-xs font-semibold uppercase tracking-wide ${declared ? "text-emerald-700 dark:text-emerald-300" : closeFight ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}`}>{declared ? "Won margin" : veryCloseFight ? "Alert lead" : closeFight ? "Tight lead" : "Lead"}</div>
             <div className={`text-lg font-black text-emerald-700 dark:text-emerald-300 ${marginChanged ? "animate-value-change" : ""}`}>{formatNumber(result.margin)}</div>
-            <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Votes</div>
+            <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Total votes</div>
             <div className={`text-sm font-black text-zinc-950 dark:text-white ${leaderVotesChanged ? "animate-value-change" : ""}`}>{formatNumber(leader?.totalVotes ?? 0)}</div>
             {marginChange !== 0 && <div className="text-xs font-semibold text-zinc-500">{formatDelta(marginChange)}</div>}
           </div>
         </div>
         <div className="mt-3 flex items-center gap-2 rounded-md bg-zinc-100 px-2.5 py-2 dark:bg-zinc-900">
           <CandidatePhoto candidateName={runnerName} photoUrl={runnerUp?.photoUrl} size="tiny" tone="trailing" suppressImage={lowBandwidthMode} />
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 space-y-0.5">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
               <ArrowDown className="h-3 w-3" />
-              Trailing
+              {declared ? "Runner-up" : "Trailing"}
             </div>
-            <div className="truncate text-xs font-bold text-zinc-950 dark:text-white" title={runnerName}>{runnerName}</div>
-            <div className="truncate text-xs font-semibold text-zinc-600 dark:text-zinc-300" title={runnerParty}>{runnerParty}</div>
+            <div className="truncate text-xs font-bold leading-tight text-zinc-950 dark:text-white" title={runnerName}>{runnerName}</div>
+            <div className="truncate text-xs font-bold leading-tight text-zinc-950 dark:text-white">{formatNumber(runnerUp?.totalVotes ?? 0)}</div>
+            <div className="truncate text-xs font-semibold leading-tight text-zinc-600 dark:text-zinc-300" title={runnerParty}>{runnerParty}</div>
           </div>
           <div className="shrink-0 text-right">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Votes</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Total votes</div>
             <div className="text-xs font-black text-zinc-950 dark:text-white">{formatNumber(runnerUp?.totalVotes ?? 0)}</div>
           </div>
         </div>
@@ -4582,7 +4589,7 @@ function ResultCard({
         <div className="relative h-4 overflow-hidden rounded-b-md bg-zinc-200 dark:bg-zinc-800" title={`Round ${roundProgress.current} of ${roundProgress.total}`}>
           <div className="h-full bg-gradient-to-r from-emerald-700 via-teal-500 to-sky-500" style={{ width: `${countingPercent}%` }} />
           <div className="absolute inset-0 flex items-center justify-center text-[10px] font-normal text-white">
-            Counting: {countingPercent}% Â� R{roundProgress.current}/{roundProgress.total}
+            Counting: {countingPercent}% Ã‚· R{roundProgress.current}/{roundProgress.total}
           </div>
         </div>
       )}
@@ -4800,7 +4807,7 @@ function TimelinePlayback({
               <div className="text-[10px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Replay point</div>
               <div className="mt-2 text-2xl font-black text-zinc-950 dark:text-white">{active.leader}</div>
               <div className="mt-1 text-sm font-bold text-zinc-600 dark:text-zinc-300">{shortPartyName(active.party)} leads by {formatNumber(active.margin)}</div>
-              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} Â� {new Date(active.at).toLocaleTimeString()}</div>
+              <div className="mt-1 text-xs font-semibold text-zinc-500">{active.status} Ã‚· {new Date(active.at).toLocaleTimeString()}</div>
             </div>
           ) : (
             <div className="rounded-md border border-dashed border-zinc-300 p-6 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700">
@@ -4967,7 +4974,7 @@ function PredictionMeter({ prediction }: { prediction: PredictionResult }) {
         <div>
           <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Prediction meter</div>
           <div className="mt-1 text-sm font-black text-zinc-950 dark:text-white">
-            {shortPartyName(prediction.leadingParty)} {prediction.label.toLowerCase()} � {prediction.confidence}%
+            {shortPartyName(prediction.leadingParty)} {prediction.label.toLowerCase()} · {prediction.confidence}%
           </div>
         </div>
         <div className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${tone.badge}`}>
@@ -6144,5 +6151,6 @@ function normalizeKeyPart(value: string) {
 function normalizeCandidateName(value: string) {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
+
 
 
