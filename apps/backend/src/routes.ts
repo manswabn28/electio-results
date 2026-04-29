@@ -8,6 +8,8 @@ import { recordViewer } from "./traffic.js";
 import { createTelegramSubscriptionLink, getTelegramSubscriptionStatus, telegramEnabled } from "./telegramAlerts.js";
 import { config } from "./config.js";
 import { getConstituencyHistories } from "./constituencyHistory.js";
+import type { CandidateResult, ConstituencyDetailCandidate, ConstituencyDetailInsights, ConstituencyDetailTimelineItem, ConstituencyElectionHistoryEntry, ElectionSourceProfile } from "@kerala-election/shared";
+import { getConstituencyTimeline, getConstituencyTimelineBatch, getProfileTimeline } from "./timelineStore.js";
 
 export function createApiRouter(): Router {
   const router = express.Router();
@@ -87,6 +89,124 @@ export function createApiRouter(): Router {
       generatedAt: new Date().toISOString(),
       profileId: parseProfile(req),
       histories: await getConstituencyHistories(ids, parseProfile(req))
+    });
+  }));
+
+  router.get("/timeline/constituencies", asyncHandler(async (req, res) => {
+    const ids = parseIds(req.query.ids);
+    const profileId = parseProfile(req);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      profileId,
+      timelines: getConstituencyTimelineBatch(profileId ?? "active", ids)
+    });
+  }));
+
+  router.get("/timeline/constituency/:constituencyId", asyncHandler(async (req, res) => {
+    const profileId = parseProfile(req);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      profileId,
+      constituencyId: String(req.params.constituencyId ?? ""),
+      timeline: getConstituencyTimeline(profileId ?? "active", String(req.params.constituencyId ?? ""))
+    });
+  }));
+
+  router.get("/timeline/profile", asyncHandler(async (req, res) => {
+    const profileId = parseProfile(req);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      profileId,
+      timeline: getProfileTimeline(profileId ?? "active")
+    });
+  }));
+
+  router.get("/elections/:stateSlug/constituencies/:constituencySlug", asyncHandler(async (req, res) => {
+    const requestedStateSlug = normalizeSlug(String(req.params.stateSlug ?? ""));
+    const requestedSeatSlug = normalizeSlug(String(req.params.constituencySlug ?? ""));
+    const profile = await resolveProfileForState(requestedStateSlug, parseProfile(req));
+    if (!profile) {
+      throw Object.assign(new Error("Election profile not found for the requested state."), {
+        statusCode: 404,
+        code: "PROFILE_NOT_FOUND"
+      });
+    }
+
+    const constituencies = (await getConstituencies(profile.profileId)).constituencies;
+    const constituency = constituencies.find((seat) => normalizeSlug(seat.constituencyName) === requestedSeatSlug);
+    if (!constituency) {
+      throw Object.assign(new Error("Constituency not found for the requested state profile."), {
+        statusCode: 404,
+        code: "CONSTITUENCY_NOT_FOUND"
+      });
+    }
+
+    const [detail, historyEnvelope] = await Promise.all([
+      getConstituencyResult(constituency.constituencyId, profile.profileId),
+      getConstituencyHistories([constituency.constituencyId], profile.profileId)
+    ]);
+    const history = historyEnvelope[0];
+    const rounds = parseRoundProgress(detail.roundStatus || detail.statusText);
+    const declared = isDeclaredWinner(detail.statusText || detail.roundStatus);
+    const electionYear = extractElectionYear(profile.electionTitle);
+    const candidates = buildDetailCandidates(detail.candidates, detail.totalVotes, declared);
+    const winner = candidates[0];
+    const runnerUp = candidates[1];
+    const leadChangedRecently = !declared && detail.margin <= 1000;
+    const timeline = getConstituencyTimeline(profile.profileId, constituency.constituencyId);
+    const insights = buildConstituencyInsights({
+      candidates,
+      declared,
+      detail,
+      historyEntries: history?.entries ?? []
+    });
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      profileId: profile.profileId,
+      election: {
+        id: profile.profileId,
+        name: profile.electionTitle,
+        year: electionYear,
+        stateName: profile.stateName,
+        stateSlug: requestedStateSlug,
+        status: declared ? "final" : detail.candidates.length ? "live" : "awaiting",
+        lastUpdated: detail.lastUpdated
+      },
+      constituency: {
+        id: constituency.constituencyId,
+        name: constituency.constituencyName,
+        slug: requestedSeatSlug,
+        district: inferDistrictName(constituency.constituencyName),
+        assemblyNumber: constituency.constituencyNumber,
+        totalRounds: rounds?.total,
+        roundsCounted: rounds?.current,
+        status: declared ? "final" : detail.candidates.length ? "live" : "awaiting"
+      },
+      result: {
+        leadingCandidateId: winner?.id,
+        runnerUpCandidateId: runnerUp?.id,
+        winnerCandidateId: declared ? winner?.id : undefined,
+        margin: detail.margin,
+        marginStatus: declared ? "Winner declared" : marginStatusLabel(detail.margin),
+        declared,
+        leadChangedRecently,
+        previousLeaderCandidateId: leadChangedRecently ? runnerUp?.id : undefined,
+        totalVotes: detail.totalVotes,
+        statusText: detail.statusText || detail.roundStatus,
+        sourceUrl: detail.sourceUrl
+      },
+      candidates,
+      history: history?.entries ?? [],
+      timeline: timeline.length ? timeline : buildDetailTimeline({
+        declared,
+        detail,
+        winner,
+        runnerUp,
+        rounds,
+        electionTitle: profile.electionTitle
+      }),
+      insights
     });
   }));
 
@@ -313,4 +433,211 @@ function resolveAdminPassword(req: Request): string | undefined {
   const header = req.header("authorization");
   const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
   return bearer || req.header("x-admin-password");
+}
+
+async function resolveProfileForState(stateSlug: string, requestedProfileId?: string): Promise<ElectionSourceProfile | undefined> {
+  const sourceConfig = await getSourceConfig();
+  const enabledProfiles = (sourceConfig.profiles ?? []).filter((profile) => profile.enabled);
+  if (requestedProfileId) {
+    return enabledProfiles.find((profile) => profile.profileId === requestedProfileId);
+  }
+  if (stateSlug) {
+    return enabledProfiles.find((profile) => normalizeSlug(profile.stateName) === stateSlug);
+  }
+  return enabledProfiles.find((profile) => profile.profileId === sourceConfig.activeProfileId)
+    ?? enabledProfiles[0];
+}
+
+function normalizeSlug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function extractElectionYear(value: string): number | undefined {
+  const match = value.match(/\b(20\d{2})\b/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function parseRoundProgress(value: string) {
+  const match = value.match(/(\d+)\s*\/\s*(\d+)/);
+  if (!match) return undefined;
+  const current = Number(match[1]);
+  const total = Number(match[2]);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return undefined;
+  return { current, total };
+}
+
+function isDeclaredWinner(value: string) {
+  return /\b(won|result\s+declared|declared)\b/i.test(value);
+}
+
+function splitPartyIdentity(value: string): { partyCode: string; partyName: string } {
+  const raw = String(value || "").trim();
+  if (!raw) return { partyCode: "-", partyName: "-" };
+  const parts = raw.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const last = parts[parts.length - 1];
+    const first = parts[0];
+    if (last.length <= 8 && /[A-Z()]/.test(last)) {
+      return {
+        partyCode: last.replace(/[^\w()]/g, ""),
+        partyName: first
+      };
+    }
+  }
+  if (raw.length <= 8 && raw === raw.toUpperCase()) {
+    return { partyCode: raw, partyName: raw };
+  }
+  const acronym = raw
+    .replace(/\([^)]*\)/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+  return {
+    partyCode: acronym || raw.toUpperCase().slice(0, 8),
+    partyName: raw
+  };
+}
+
+function buildDetailCandidates(candidates: CandidateResult[], totalVotes: number, declared: boolean): ConstituencyDetailCandidate[] {
+  const safeTotal = totalVotes > 0 ? totalVotes : candidates.reduce((sum, candidate) => sum + candidate.totalVotes, 0);
+  return candidates.map((candidate, index) => {
+    const party = splitPartyIdentity(candidate.party);
+    const marginFromLeader = index === 0 ? 0 : Math.max(0, (candidates[0]?.totalVotes ?? 0) - candidate.totalVotes);
+    return {
+      id: `${candidate.serialNo}-${normalizeSlug(candidate.candidateName)}`,
+      name: candidate.candidateName,
+      partyCode: party.partyCode,
+      partyName: party.partyName,
+      votes: candidate.totalVotes,
+      voteShare: safeTotal > 0 ? Number(((candidate.totalVotes / safeTotal) * 100).toFixed(2)) : candidate.votePercent,
+      rank: index + 1,
+      photoUrl: candidate.photoUrl,
+      status: index === 0
+        ? declared ? "won" : "leading"
+        : index === 1
+          ? declared ? "runner-up" : "trailing"
+          : declared ? "lost" : "trailing",
+      marginFromLeader
+    };
+  });
+}
+
+function buildDetailTimeline(input: {
+  declared: boolean;
+  detail: Awaited<ReturnType<typeof getConstituencyResult>>;
+  winner?: ConstituencyDetailCandidate;
+  runnerUp?: ConstituencyDetailCandidate;
+  rounds?: { current: number; total: number };
+  electionTitle: string;
+}): ConstituencyDetailTimelineItem[] {
+  const time = input.detail.lastUpdated || new Date().toISOString();
+  const items: ConstituencyDetailTimelineItem[] = [
+    {
+      id: "counting-started",
+      time,
+      type: "counting-started",
+      title: "Counting started",
+      description: `${input.electionTitle} counting updates began for ${input.detail.constituencyName}.`
+    },
+    {
+      id: "first-trend",
+      time,
+      type: "update",
+      title: "First trend available",
+      description: `${input.winner?.name ?? input.detail.leadingCandidate} moved ahead in the early count.`
+    }
+  ];
+
+  if (input.detail.margin <= 1000) {
+    items.push({
+      id: "tight-race",
+      time,
+      type: "tight-race",
+      title: "Tight race alert",
+      description: `Margin narrowed to ${formatNumber(input.detail.margin)} votes.`
+    });
+  } else if (input.runnerUp) {
+    items.push({
+      id: "lead-update",
+      time,
+      type: "milestone",
+      title: `${input.winner?.partyCode ?? "Leader"} extends lead`,
+      description: `${input.winner?.name ?? input.detail.leadingCandidate} led ${input.runnerUp.name} by ${formatNumber(input.detail.margin)} votes.`
+    });
+  }
+
+  if (input.rounds) {
+    items.push({
+      id: "round-progress",
+      time,
+      type: "update",
+      title: "Counting progress update",
+      description: `${input.rounds.current}/${input.rounds.total} rounds counted.`
+    });
+  }
+
+  if (input.declared && input.winner) {
+    items.push({
+      id: "winner-declared",
+      time,
+      type: "winner",
+      title: `Winner declared: ${input.winner.partyCode}`,
+      description: `${input.winner.name} won by ${formatNumber(input.detail.margin)} votes.`
+    });
+  }
+
+  return items;
+}
+
+function buildConstituencyInsights(input: {
+  candidates: ConstituencyDetailCandidate[];
+  declared: boolean;
+  detail: Awaited<ReturnType<typeof getConstituencyResult>>;
+  historyEntries: ConstituencyElectionHistoryEntry[];
+}): ConstituencyDetailInsights {
+  const previous = input.historyEntries[0];
+  const margins = input.historyEntries.map((entry) => entry.margin).filter((value) => Number.isFinite(value));
+  const historicalLean = deriveHistoricalLean(input.historyEntries);
+  return {
+    seatType: input.detail.margin <= 500 ? "Ultra-close finish" : input.detail.margin <= 5000 ? "Competitive seat" : "Clear mandate",
+    historicalLean,
+    closestPastMargin: margins.length ? Math.min(...margins) : undefined,
+    biggestPastMargin: margins.length ? Math.max(...margins) : undefined,
+    previousWinnerParty: previous?.party,
+    previousWinnerName: previous?.winnerName,
+    volatilityScore: input.detail.margin <= 500 ? "high" : input.detail.margin <= 5000 ? "medium" : "low",
+    turnout: previous?.turnoutPercent,
+    totalCandidates: input.candidates.length,
+    leadStability: input.declared || input.detail.margin > 1000 ? "stable" : "swinging"
+  };
+}
+
+function deriveHistoricalLean(entries: ConstituencyElectionHistoryEntry[]): string | undefined {
+  if (!entries.length) return undefined;
+  const winners = new Map<string, number>();
+  for (const entry of entries) {
+    winners.set(entry.party, (winners.get(entry.party) ?? 0) + 1);
+  }
+  const sorted = [...winners.entries()].sort((left, right) => right[1] - left[1]);
+  if (!sorted.length) return undefined;
+  if (sorted[0][1] >= 2) return `${sorted[0][0]} leaning`;
+  if (sorted.length > 1) return "Swing seat";
+  return "Competitive seat";
+}
+
+function marginStatusLabel(margin: number): string {
+  if (margin <= 500) return "Too close to call";
+  if (margin <= 1000) return "Alert lead";
+  if (margin <= 5000) return "Tight lead";
+  return "Clear lead";
+}
+
+function inferDistrictName(_constituencyName: string): string | undefined {
+  return undefined;
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en-IN").format(value);
 }

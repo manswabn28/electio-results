@@ -300,3 +300,112 @@ export type TelegramSubscriptionStatusResponse = {
   rules?: TelegramAlertRules;
   selectedCount?: number;
 };
+
+export type ConstituencyDetailCandidate = {
+  id: string;
+  name: string;
+  partyCode: string;
+  partyName: string;
+  votes: number;
+  voteShare: number;
+  rank: number;
+  photoUrl?: string;
+  status: "won" | "leading" | "runner-up" | "trailing" | "lost";
+  marginFromLeader?: number;
+};
+
+export type ConstituencyDetailTimelineItem = {
+  id: string;
+  time: string;
+  type: "counting-started" | "update" | "lead-change" | "tight-race" | "milestone" | "winner";
+  title: string;
+  description: string;
+  candidateId?: string;
+  partyCode?: string;
+};
+
+export type ElectionTimelineEvent = ConstituencyDetailTimelineItem & {
+  profileId: string;
+  constituencyId?: string;
+  constituencyName?: string;
+  candidateName?: string;
+  margin?: number;
+  declared?: boolean;
+  roundsCounted?: number;
+  totalRounds?: number;
+  statusText?: string;
+  scope: "constituency" | "profile";
+};
+
+export type ConstituencyTimelineResponse = {
+  generatedAt: string;
+  profileId?: string;
+  constituencyId: string;
+  timeline: ElectionTimelineEvent[];
+};
+
+export type ConstituencyTimelineBatchResponse = {
+  generatedAt: string;
+  profileId?: string;
+  timelines: Record<string, ElectionTimelineEvent[]>;
+};
+
+export type ProfileTimelineResponse = {
+  generatedAt: string;
+  profileId?: string;
+  timeline: ElectionTimelineEvent[];
+};
+
+export type ConstituencyDetailInsights = {
+  seatType?: string;
+  historicalLean?: string;
+  closestPastMargin?: number;
+  biggestPastMargin?: number;
+  previousWinnerParty?: string;
+  previousWinnerName?: string;
+  volatilityScore?: "low" | "medium" | "high";
+  turnout?: number;
+  totalCandidates: number;
+  leadStability?: "stable" | "swinging";
+};
+
+export type ConstituencyDetailResponse = {
+  generatedAt: string;
+  profileId?: string;
+  election: {
+    id: string;
+    name: string;
+    year?: number;
+    stateName: string;
+    stateSlug: string;
+    status: "live" | "final" | "awaiting";
+    lastUpdated?: string;
+  };
+  constituency: {
+    id: string;
+    name: string;
+    slug: string;
+    district?: string;
+    assemblyNumber: string;
+    totalRounds?: number;
+    roundsCounted?: number;
+    status: "live" | "final" | "awaiting";
+  };
+  result: {
+    leadingCandidateId?: string;
+    runnerUpCandidateId?: string;
+    winnerCandidateId?: string;
+    margin: number;
+    marginStatus: string;
+    declared: boolean;
+    leadChangedRecently: boolean;
+    previousLeaderCandidateId?: string;
+    totalVotes: number;
+    statusText: string;
+    sourceUrl?: string;
+  };
+  candidates: ConstituencyDetailCandidate[];
+  history: ConstituencyElectionHistoryEntry[];
+  timeline: ConstituencyDetailTimelineItem[];
+  insights: ConstituencyDetailInsights;
+};

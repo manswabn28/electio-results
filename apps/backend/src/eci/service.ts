@@ -22,6 +22,7 @@ import {
   toConstituencyOptions
 } from "./parser.js";
 import { buildCandidateDetailUrl, getEffectiveSourceConfig, getSourceConfig, resolveConfiguredUrl } from "../sourceConfigStore.js";
+import { recordConstituencyRefresh, recordSummaryRefresh } from "../timelineStore.js";
 
 const cache = new TtlCache<unknown>(config.CACHE_TTL_SECONDS * 1000);
 const backgroundRefreshes = new Map<string, Promise<unknown>>();
@@ -67,6 +68,7 @@ async function getStateSummaries(profileId?: string): Promise<{ sourceUrl?: stri
 
 async function refreshStateSummaries(cacheKey: string, profileId?: string): Promise<{ sourceUrl?: string; summaries: ConstituencySummary[]; error?: string }> {
   try {
+    const previous = cache.getStale(cacheKey) as { sourceUrl?: string; summaries: ConstituencySummary[]; error?: string } | undefined;
     const sourceUrl = await getKeralaStatePageUrl(profileId);
     if (!sourceUrl) {
       const value = fallbackState("ECI Kerala statewise result page is not configured or not discoverable yet.");
@@ -78,6 +80,7 @@ async function refreshStateSummaries(cacheKey: string, profileId?: string): Prom
     const summaries = await loadAllStatePageSummaries(sourceUrl, sourceConfig);
     const value = { sourceUrl, summaries };
     cache.set(cacheKey, value);
+    recordSummaryRefresh(profileId ?? "active", summaries, previous?.summaries);
     return value;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown ECI source error";
@@ -247,6 +250,7 @@ export async function getConstituencyResults(ids: string[], profileId?: string):
 }
 
 async function refreshConstituencyResult(constituencyId: string, cacheKey: string, profileId?: string): Promise<ConstituencyResult> {
+  const previous = cache.getStale(cacheKey) as ConstituencyResult | undefined;
   const { sourceUrl, summaries } = await getStateSummaries(profileId);
   if (!sourceUrl) {
     throw Object.assign(new Error("Live ECI source is not configured yet."), { statusCode: 503, code: "SOURCE_NOT_CONFIGURED" });
@@ -270,6 +274,7 @@ async function refreshConstituencyResult(constituencyId: string, cacheKey: strin
       });
     }
     cache.set(cacheKey, result);
+    recordConstituencyRefresh(profileId ?? "active", result, previous);
     return result;
   } catch (error) {
     logger.error({ error, constituencyId, sourceUrl: summary.sourceUrl }, "Failed to parse constituency detail page");

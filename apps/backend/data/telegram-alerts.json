@@ -2,10 +2,15 @@
   "subscriptions": [],
   "pending": [
     {
-      "code": "eae6173cb3108dd8c7a5e219b4edbec5",
+      "code": "e23217012150c483338642d3197a26a6",
       "viewerId": "3aba8112-0d40-4465-a5ea-a0dba2600768",
       "profileId": "bihar-resultacgennov2025",
-      "selectedIds": [],
+      "selectedIds": [
+        "195-agiaon",
+        "120-amnour",
+        "056-amour",
+        "194-arrah"
+      ],
       "watchedCandidateIds": [],
       "rules": {
         "leadChange": true,
@@ -13,7 +18,7 @@
         "marginBelow500": true,
         "majorityCrossed": true
       },
-      "createdAt": "2026-04-28T20:31:55.105Z"
+      "createdAt": "2026-04-29T08:59:50.205Z"
     },
     {
       "code": "d5140e84526e2674afeb3e1eb1a9ccd4",
@@ -34,5 +39,6 @@
       "createdAt": "2026-04-28T07:32:59.685Z"
     }
   ],
+  "lastUpdateId": 879300493,
   "lastAlertAtByKey": {}
 }
