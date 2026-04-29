@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import EmojiPicker, { Theme } from "emoji-picker-react";
 import { toBlob as toImageBlob } from "html-to-image";
 import { AlertTriangle, ArrowDown, ArrowUp, Bell, Check, ChevronLeft, ChevronRight, Crown, Download, Eraser, Eye, HelpCircle, History, Hourglass, Lock, Maximize2, MessageCircle, Moon, Play, RefreshCw, Search, Settings, Share2, Star, StickyNote, Sun, Users, Volume2, X } from "lucide-react";
-import type { CandidateOption, ChatMessage, ConstituencyElectionHistory, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, PartySeatSummary, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
-import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, createTelegramSubscriptionLink, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencyHistory, fetchConstituencies, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, fetchTelegramSubscriptionStatus, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, shareImageProxyUrl, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
+import type { CandidateOption, ChatMessage, ConstituencyDetailResponse, ConstituencyElectionHistory, ConstituencyOption, ConstituencyResult, ConstituencySummary, DiscoveredSource, ElectionSourceProfile, ElectionTimelineEvent, PartySeatSummary, PublicSourceConfig, SortMode, SourceDiagnosticsResponse } from "@kerala-election/shared";
+import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, createTelegramSubscriptionLink, deleteChatMessage, fetchCandidates, fetchChatMessages, fetchConstituencyHistory, fetchConstituencies, fetchConstituencyTimelines, fetchDiscoveryStatus, fetchPartySummary, fetchResult, fetchResults, fetchSourceConfig, fetchSourceDiagnostics, fetchSummary, fetchTelegramSubscriptionStatus, postChatMessage, revertSourceConfig, runSourceDiscovery, sendTrafficHeartbeat, shareImageProxyUrl, updateActiveSourceProfile, updateDiscoverySchedule, updateSourceConfig } from "./api";
 import { downloadCsv, downloadJson } from "./export";
 import { playChatMessageAlert, playLeaderAlert, primeAudioAlerts, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
@@ -12,6 +12,7 @@ import { applySeo } from "./seo";
 import { ElectionBattleShareCard } from "./ElectionBattleShareCard";
 import { buildElectionBattleShareCardPropsFromResult } from "./shareCardExport";
 import { FinalVictoryShareCard, PartySummaryShareCard } from "./SharePremiumCards";
+import { ConstituencyDetailPage } from "./ConstituencyDetailPage";
 
 const SELECTED_STORAGE_KEY = "kerala-election:selected-constituencies";
 const CACHED_RESULTS_KEY = "kerala-election:last-known-results";
@@ -89,6 +90,10 @@ type ChangeInsight = {
 };
 
 type AppView = "dashboard" | "help";
+type AppRoute =
+  | { kind: "dashboard" }
+  | { kind: "help" }
+  | { kind: "constituency"; stateSlug: string; constituencySlug: string };
 type ShareCardFormat = "square" | "story" | "landscape";
 type ShareCardPayload =
   | {
@@ -117,10 +122,8 @@ type ShareCardPayload =
 
 export function App() {
   const queryClient = useQueryClient();
-  const [appView, setAppView] = useState<AppView>(() => {
-    if (typeof window === "undefined") return "dashboard";
-    return new URLSearchParams(window.location.search).get("view") === "help" ? "help" : "dashboard";
-  });
+  const [appRoute, setAppRoute] = useState<AppRoute>(() => parseAppRouteFromLocation());
+  const appView: AppView = appRoute.kind === "help" ? "help" : "dashboard";
   const [selectedIds, setSelectedIds] = useLocalStorageState<string[]>(SELECTED_STORAGE_KEY, []);
   const [hasBootstrappedFavorites, setHasBootstrappedFavorites] = useState(() =>
     localStorage.getItem(SELECTED_STORAGE_KEY) !== null
@@ -208,6 +211,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    initAnalytics();
+    if (appRoute.kind === "constituency") return;
     const selectedCount = selectedIds.length;
     applySeo({
       title: appView === "help"
@@ -221,9 +226,8 @@ export function App() {
           ? `Live ECI-backed Kerala Assembly Election results for ${selectedCount} selected constituencies, including candidate leads, margins, party totals, and updates.`
           : undefined
     });
-    initAnalytics();
     trackPageView(document.title);
-  }, [appView, selectedIds.length]);
+  }, [appRoute.kind, appView, selectedIds.length]);
 
   useEffect(() => {
     if (!watchMode || !("wakeLock" in navigator)) return;
@@ -305,8 +309,7 @@ export function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      const params = new URLSearchParams(window.location.search);
-      setAppView(params.get("view") === "help" ? "help" : "dashboard");
+      setAppRoute(parseAppRouteFromLocation());
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -333,6 +336,17 @@ export function App() {
   const activeProfile = useMemo(() => {
     return sourceProfiles.find((profile) => profile.profileId === effectiveProfileId);
   }, [effectiveProfileId, sourceProfiles]);
+  const routedProfile = useMemo(() => {
+    if (appRoute.kind !== "constituency") return undefined;
+    return sourceProfiles.find((profile) => slugify(profile.stateName) === appRoute.stateSlug);
+  }, [appRoute, sourceProfiles]);
+  const detailProfileId = routedProfile?.profileId ?? effectiveProfileId;
+
+  useEffect(() => {
+    if (appRoute.kind !== "constituency" || !routedProfile?.profileId) return;
+    if (activeProfileId === routedProfile.profileId) return;
+    setActiveProfileId(routedProfile.profileId);
+  }, [activeProfileId, appRoute.kind, routedProfile?.profileId, setActiveProfileId]);
 
   useEffect(() => {
     if (!effectiveProfileId || hydratedProfileRef.current === effectiveProfileId) return;
@@ -452,7 +466,6 @@ export function App() {
     enabled: selectedIds.length > 0,
     staleTime: 30 * 60_000
   });
-
   const summaryQuery = useQuery({
     queryKey: ["summary", effectiveProfileId, selectedIds],
     queryFn: () => fetchSummary(selectedIds, effectiveProfileId),
@@ -460,6 +473,13 @@ export function App() {
   });
 
   const refreshMs = Math.max(5, sourceConfigQuery.data?.refreshIntervalSeconds ?? 30) * 1000;
+
+  const constituencyTimelineQuery = useQuery({
+    queryKey: ["constituency-timelines", effectiveProfileId, selectedIds],
+    queryFn: () => fetchConstituencyTimelines(selectedIds, effectiveProfileId),
+    enabled: selectedIds.length > 0,
+    refetchInterval: refreshMs
+  });
 
   const allSummaryQuery = useQuery({
     queryKey: ["summary", "all-winner-watch", effectiveProfileId, constituencyOptions.map((item) => item.constituencyId).join(",")],
@@ -572,6 +592,15 @@ export function App() {
   }, [checkedAtById, lastCheckedById, liveResults, refreshMs, selectedIds]);
   const lastSeenChatAt = lastSeenChatAtByProfile[effectiveProfileId] ?? "";
   const constituencyHistoryById = useMemo(() => new Map((constituencyHistoryQuery.data ?? []).map((history) => [history.constituencyId, history])), [constituencyHistoryQuery.data]);
+  const constituencyTimelineById = useMemo(() => constituencyTimelineQuery.data ?? {}, [constituencyTimelineQuery.data]);
+  const replayHistoryById = useMemo(() => {
+    return Object.fromEntries(
+      Object.entries(constituencyTimelineById).map(([constituencyId, timeline]) => [
+        constituencyId,
+        convertTimelineEventsToLeaderHistory(timeline)
+      ])
+    ) as Record<string, LeaderHistoryEntry[]>;
+  }, [constituencyTimelineById]);
   const latestChatAt = useMemo(
     () => liveChatMessages.reduce((latest, message) => message.createdAt > latest ? message.createdAt : latest, ""),
     [liveChatMessages]
@@ -1258,7 +1287,7 @@ export function App() {
     const url = new URL(window.location.href);
     url.searchParams.set("view", "help");
     window.history.pushState(null, "", url);
-    setAppView("help");
+    setAppRoute({ kind: "help" });
     trackEvent("help_open");
   };
 
@@ -1266,7 +1295,7 @@ export function App() {
     const url = new URL(window.location.href);
     url.searchParams.delete("view");
     window.history.pushState(null, "", url);
-    setAppView("dashboard");
+    setAppRoute({ kind: "dashboard" });
     trackEvent("help_close");
   };
 
@@ -1277,6 +1306,38 @@ export function App() {
         refreshSeconds={sourceConfigQuery.data?.refreshIntervalSeconds ?? 30}
         onBack={closeHelpPage}
       />
+    );
+  }
+
+  if (appRoute.kind === "constituency") {
+    return (
+      <>
+        <ConstituencyDetailPage
+          stateSlug={appRoute.stateSlug}
+          constituencySlug={appRoute.constituencySlug}
+          profileId={detailProfileId}
+          watchedIds={detailProfileId && detailProfileId !== effectiveProfileId ? (selectedIdsByProfile[detailProfileId] ?? []) : selectedIds}
+          onBack={() => {
+            const url = new URL(window.location.href);
+            url.pathname = "/";
+            url.search = "";
+            window.history.pushState(null, "", url);
+            setAppRoute({ kind: "dashboard" });
+          }}
+          onToggleWatchlist={(constituencyId) => {
+            setSelectedIds((current) => current.includes(constituencyId)
+              ? current.filter((item) => item !== constituencyId)
+              : [...current, constituencyId]);
+          }}
+          onGenerateShareCard={(detail) => setShareCardPayload(buildConstituencySharePayloadFromDetail(
+            detail,
+            activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election",
+            partyColorsByKey
+          ))}
+          onOpenAlerts={() => telegramLinkMutation.mutate()}
+        />
+        {shareCardPayload && <ShareCardModal payload={shareCardPayload} onClose={() => setShareCardPayload(null)} />}
+      </>
     );
   }
 
@@ -1508,10 +1569,16 @@ export function App() {
                 leaderChanged={leaderChanges.some((item) => item.constituencyId === result.constituencyId)}
                 integrityWarning={integrityWarningsById[result.constituencyId]}
                 lowBandwidthMode={lowBandwidthMode}
-                history={leaderHistory[result.constituencyId] ?? []}
+                history={replayHistoryById[result.constituencyId] ?? leaderHistory[result.constituencyId] ?? []}
                 seatHistory={constituencyHistoryById.get(result.constituencyId)}
                 note={constituencyNotes[result.constituencyId] ?? ""}
                 onNoteChange={(note) => setConstituencyNotes((current) => ({ ...current, [result.constituencyId]: note }))}
+                onNavigate={() => {
+                  const nextPath = buildConstituencyPath(activeProfile?.stateName, result.constituencyName);
+                  window.history.pushState(null, "", nextPath);
+                  setAppRoute(parseAppRouteFromLocation());
+                  trackEvent("constituency_detail_open", { constituency_id: result.constituencyId, constituency: result.constituencyName });
+                }}
                 onShare={() => setShareCardPayload({
                   kind: "constituency",
                   result,
@@ -3879,7 +3946,7 @@ function ShareCardModal({ payload, onClose }: { payload: ShareCardPayload; onClo
           await navigator.share({
             files: [file],
             title: title,
-            text: "Track live results at https://results.onekeralam.in/",
+            text: "Track live results on OneKerala Results.",
             url: "https://results.onekeralam.in/"
           });
         } else {
@@ -4433,6 +4500,7 @@ function ResultCard({
   seatHistory,
   note,
   onNoteChange,
+  onNavigate,
   onShare
 }: {
   result: ConstituencyResult;
@@ -4450,6 +4518,7 @@ function ResultCard({
   seatHistory?: ConstituencyElectionHistory;
   note: string;
   onNoteChange: (note: string) => void;
+  onNavigate: () => void;
   onShare: () => void;
 }) {
   const [notesOpen, setNotesOpen] = useState(false);
@@ -4474,7 +4543,20 @@ function ResultCard({
   const marginChanged = previous ? result.margin !== previous.margin : false;
 
   return (
-    <article key={`${result.constituencyId}-${checkedAt ?? 0}`} className={`panel animate-card-refresh relative w-full min-w-0 max-w-full overflow-visible rounded-md ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}>
+    <article
+      key={`${result.constituencyId}-${checkedAt ?? 0}`}
+      className={`panel animate-card-refresh relative w-full min-w-0 max-w-full cursor-pointer overflow-visible rounded-md transition hover:shadow-xl hover:shadow-black/10 focus-within:ring-2 focus-within:ring-emerald-400 ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}
+      role="link"
+      tabIndex={0}
+      aria-label={`Open ${result.constituencyName} constituency detail page`}
+      onClick={onNavigate}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onNavigate();
+        }
+      }}
+    >
       <div className="border-b border-zinc-200 dark:border-zinc-800">
         <div className="p-4">
         <div className="flex items-start justify-between gap-2">
@@ -4490,10 +4572,15 @@ function ResultCard({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <HistoryTooltip history={history} seatHistory={seatHistory} onOpen={() => setTimelineOpen(true)} />
+            <div onClick={(event) => event.stopPropagation()}>
+              <HistoryTooltip history={history} seatHistory={seatHistory} onOpen={() => setTimelineOpen(true)} />
+            </div>
             <button
               className={`rounded-md p-1 ${note ? "text-emerald-700 dark:text-emerald-300" : "text-zinc-400 hover:text-emerald-700"}`}
-              onClick={() => setNotesOpen(!notesOpen)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setNotesOpen(!notesOpen);
+              }}
               title="Seat note"
               aria-label="Seat note"
             >
@@ -4501,7 +4588,10 @@ function ResultCard({
             </button>
             <button
               className={`rounded-md p-1 ${isPinned ? "text-amber-500" : "text-zinc-400 hover:text-amber-500"}`}
-              onClick={onTogglePin}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTogglePin();
+              }}
               title={isPinned ? "Unpin" : "Pin"}
               aria-label={isPinned ? "Unpin constituency" : "Pin constituency"}
             >
@@ -4509,7 +4599,10 @@ function ResultCard({
             </button>
             <button
               className="rounded-md p-1 text-zinc-400 hover:text-emerald-700 dark:hover:text-emerald-300"
-              onClick={onShare}
+              onClick={(event) => {
+                event.stopPropagation();
+                onShare();
+              }}
               title="Share result card"
               aria-label={`Share ${result.constituencyName} result card`}
             >
@@ -4517,7 +4610,10 @@ function ResultCard({
             </button>
             <button
               className="rounded-md p-1 text-zinc-400 hover:text-rose-600 dark:hover:text-rose-300"
-              onClick={onRemove}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove();
+              }}
               title="Remove from selected"
               aria-label={`Remove ${result.constituencyName} from selected constituencies`}
             >
@@ -4533,6 +4629,7 @@ function ResultCard({
             className="mt-3 h-16 w-full resize-none rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-xs"
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
             placeholder="Private note for this seat"
           />
         )}
@@ -6079,6 +6176,18 @@ function proxyBattleShareCardAssets(props: ReturnType<typeof buildElectionBattle
   };
 }
 
+function convertTimelineEventsToLeaderHistory(timeline: ElectionTimelineEvent[]): LeaderHistoryEntry[] {
+  return timeline
+    .filter((event) => event.scope === "constituency" && event.candidateName && typeof event.margin === "number")
+    .map((event) => ({
+      at: Date.parse(event.time) || Date.now(),
+      leader: event.candidateName || "-",
+      party: event.partyCode || "-",
+      margin: event.margin ?? 0,
+      status: event.statusText || event.title || "Counting"
+    }));
+}
+
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -6095,6 +6204,67 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "share-card";
+}
+
+function parseAppRouteFromLocation(): AppRoute {
+  if (typeof window === "undefined") return { kind: "dashboard" };
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const match = path.match(/^\/constituency\/([^/]+)\/([^/]+)$/i);
+  if (match) {
+    return {
+      kind: "constituency",
+      stateSlug: decodeURIComponent(match[1]),
+      constituencySlug: decodeURIComponent(match[2])
+    };
+  }
+  return new URLSearchParams(window.location.search).get("view") === "help" ? { kind: "help" } : { kind: "dashboard" };
+}
+
+function buildConstituencyPath(stateName: string | undefined, constituencyName: string) {
+  const stateSlug = slugify(stateName || "assembly");
+  const constituencySlug = slugify(constituencyName);
+  return `/constituency/${stateSlug}/${constituencySlug}`;
+}
+
+function buildConstituencySharePayloadFromDetail(
+  detail: ConstituencyDetailResponse,
+  electionTitle: string,
+  partyColorsByKey: Map<string, string>
+): ShareCardPayload {
+  const candidates = detail.candidates.map((candidate, index) => ({
+    serialNo: index + 1,
+    candidateName: candidate.name,
+    party: `${candidate.partyName} - ${candidate.partyCode}`,
+    photoUrl: candidate.photoUrl,
+    evmVotes: candidate.votes,
+    postalVotes: 0,
+    totalVotes: candidate.votes,
+    votePercent: candidate.voteShare
+  }));
+  const result: ConstituencyResult = {
+    constituencyId: detail.constituency.id,
+    constituencyName: detail.constituency.name,
+    constituencyNumber: detail.constituency.assemblyNumber,
+    statusText: detail.result.statusText,
+    roundStatus: detail.constituency.totalRounds ? `${detail.constituency.roundsCounted ?? 0}/${detail.constituency.totalRounds}` : detail.result.statusText,
+    leadingCandidate: detail.candidates[0]?.name ?? "",
+    leadingParty: `${detail.candidates[0]?.partyName ?? ""} - ${detail.candidates[0]?.partyCode ?? ""}`.trim(),
+    trailingCandidate: detail.candidates[1]?.name ?? "",
+    trailingParty: `${detail.candidates[1]?.partyName ?? ""} - ${detail.candidates[1]?.partyCode ?? ""}`.trim(),
+    margin: detail.result.margin,
+    totalVotes: detail.result.totalVotes || detail.candidates.reduce((sum, candidate) => sum + candidate.votes, 0),
+    lastUpdated: detail.election.lastUpdated || new Date().toISOString(),
+    candidates,
+    sourceUrl: detail.result.sourceUrl || ""
+  };
+  return {
+    kind: "constituency",
+    result,
+    checkedAt: detail.election.lastUpdated ? new Date(detail.election.lastUpdated).getTime() : Date.now(),
+    electionTitle,
+    leftPartyColor: partyColorsByKey.get(partyLookupKey(result.leadingParty || result.candidates[0]?.party || "")),
+    rightPartyColor: partyColorsByKey.get(partyLookupKey(result.trailingParty || result.candidates[1]?.party || ""))
+  };
 }
 
 function toShareImageUrl(url: string) {
