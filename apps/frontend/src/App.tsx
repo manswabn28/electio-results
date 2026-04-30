@@ -136,7 +136,7 @@ export function App() {
     localStorage.getItem(SELECTED_STORAGE_KEY) !== null
   );
   const [sortMode, setSortMode] = useLocalStorageState<SortMode>("kerala-election:sort-mode", "selected");
-  const [darkMode, setDarkMode] = useLocalStorageState<boolean>("kerala-election:dark-mode", false);
+  const [darkMode, setDarkMode] = useLocalStorageState<boolean>("kerala-election:dark-mode", true);
   const [soundEnabled, setSoundEnabled] = useLocalStorageState<boolean>("kerala-election:sound", false);
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState<boolean>("kerala-election:sidebar-collapsed", false);
   const [watchMode, setWatchMode] = useLocalStorageState<boolean>("kerala-election:watch-mode", false);
@@ -1290,6 +1290,38 @@ export function App() {
     void queryClient.invalidateQueries();
   };
 
+  const openConstituencyShareCard = async (constituencyId: string) => {
+    const existingResult = detailResultsById.get(constituencyId) ?? cachedResults[constituencyId];
+    if (existingResult) {
+      setShareCardPayload({
+        kind: "constituency",
+        result: existingResult,
+        checkedAt: checkedAtById[constituencyId] || lastCheckedById[constituencyId] || lastSuccessAt,
+        electionTitle: activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election",
+        leftPartyColor: partyColorsByKey.get(partyLookupKey(existingResult.leadingParty || existingResult.candidates[0]?.party || "")),
+        rightPartyColor: partyColorsByKey.get(partyLookupKey(existingResult.trailingParty || existingResult.candidates[1]?.party || ""))
+      });
+      return;
+    }
+
+    setToast("Preparing share card...");
+    window.setTimeout(() => setToast(""), 2500);
+    try {
+      const result = await fetchResult(constituencyId, effectiveProfileId);
+      setShareCardPayload({
+        kind: "constituency",
+        result,
+        checkedAt: Date.now(),
+        electionTitle: activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election",
+        leftPartyColor: partyColorsByKey.get(partyLookupKey(result.leadingParty || result.candidates[0]?.party || "")),
+        rightPartyColor: partyColorsByKey.get(partyLookupKey(result.trailingParty || result.candidates[1]?.party || ""))
+      });
+    } catch {
+      setToast("Could not prepare the constituency share card right now.");
+      window.setTimeout(() => setToast(""), 3500);
+    }
+  };
+
   const openHelpPage = () => {
     const url = new URL(window.location.href);
     url.searchParams.set("view", "help");
@@ -1365,6 +1397,7 @@ export function App() {
   }
 
   return (
+    <>
     <main className="min-h-screen max-w-full overflow-x-hidden">
       {(showOldResultNotice || showCountingCountdown) && (
         <OldResultNotice showBanner={showOldResultNotice} showCountdown={showCountingCountdown} />
@@ -1503,13 +1536,16 @@ export function App() {
         )}
         {battlegroundPreview.length > 0 && dismissedBattlegroundSignal !== battlegroundSignal && (
           <BattlegroundStrip
+            key={battlegroundSignal}
             races={battlegroundPreview}
             selectedIds={selectedIds}
             leaderChanges={leaderChanges}
+            candidatePhotoLookup={candidatePhotoLookup}
             onAdd={(summary) => {
               trackEvent("battleground_add", { constituency_id: summary.constituencyId, margin: summary.margin });
               setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
             }}
+            onShare={(summary) => void openConstituencyShareCard(summary.constituencyId)}
             onOpenAll={() => {
               trackEvent("battleground_open_all", { count: battlegroundRaces.length });
               setBattlegroundOpen(true);
@@ -1765,6 +1801,7 @@ export function App() {
         </div>
       </section>
       <Footer navigate={navigateToPath} />
+    </main>
       <PartySummaryDock
         parties={partySummaryQuery.data?.parties ?? []}
         checkedAt={partySummaryQuery.dataUpdatedAt}
@@ -1826,10 +1863,12 @@ export function App() {
           races={battlegroundRaces}
           selectedIds={selectedIds}
           leaderChanges={leaderChanges}
+          candidatePhotoLookup={candidatePhotoLookup}
           onAdd={(summary) => {
             setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
             trackEvent("battleground_modal_add", { constituency_id: summary.constituencyId, margin: summary.margin });
           }}
+          onShareRace={(summary) => void openConstituencyShareCard(summary.constituencyId)}
           onShare={() => setShareCardPayload({
             kind: "battleground",
             races: battlegroundRaces.slice(0, 5),
@@ -1885,7 +1924,7 @@ export function App() {
           setLiveAudioExpanded(false);
         }}
       />
-    </main>
+    </>
   );
 }
 
@@ -2769,7 +2808,10 @@ function ConstituencySelector({
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(true);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const selected = new Set(selectedIds);
+  const allSelected = options.length > 0 && selectedIds.length === options.length;
+  const someSelected = selectedIds.length > 0 && !allSelected;
   const selectedOptions = selectedIds
     .map((id) => options.find((option) => option.constituencyId === id))
     .filter(Boolean) as ConstituencyOption[];
@@ -2783,6 +2825,15 @@ function ConstituencySelector({
     if (next.has(id)) next.delete(id);
     else next.add(id);
     onChange([...next]);
+  };
+
+  useEffect(() => {
+    if (!selectAllRef.current) return;
+    selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected]);
+
+  const toggleAll = () => {
+    onChange(allSelected ? [] : options.map((option) => option.constituencyId));
   };
 
   if (collapsed) {
@@ -2870,6 +2921,32 @@ function ConstituencySelector({
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
+          {!isLoading && options.length > 0 && (
+            <button
+              className="mt-3 flex w-full items-center justify-between rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-left transition hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:bg-zinc-900"
+              onClick={toggleAll}
+              type="button"
+              aria-pressed={allSelected}
+              title={allSelected ? "Unselect all constituencies" : "Select all constituencies"}
+            >
+              <span className="flex items-center gap-3">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allSelected}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={toggleAll}
+                  className="h-4 w-4 accent-emerald-700"
+                />
+                <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                  {allSelected ? "Unselect all constituencies" : "Select all constituencies"}
+                </span>
+              </span>
+              <span className="text-xs font-bold text-zinc-500">
+                {selectedIds.length}/{options.length}
+              </span>
+            </button>
+          )}
           <div className="mt-3 max-h-[460px] overflow-y-auto pr-1">
             {isLoading && <p className="py-4 text-sm text-zinc-500">Loading constituencies...</p>}
             {!isLoading && filtered.length === 0 && <p className="py-4 text-sm text-zinc-500">No constituencies found.</p>}
@@ -3458,7 +3535,7 @@ function PartySummaryDock({
   if (!parties.length && !traffic) return null;
 
   return (
-    <div key={checkedAt ?? 0} className="animate-summary-refresh fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white/95 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
+    <div key={checkedAt ?? 0} className="animate-summary-wave-refresh animate-refresh-wave fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white/95 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
       <div className="mx-auto flex max-w-7xl items-center gap-3 overflow-x-auto px-4 py-2 pr-28 sm:px-6 sm:pr-32 lg:px-8">
         {parties.length > 0 && (
           <div className="shrink-0 pr-2">
@@ -3762,20 +3839,24 @@ function BattlegroundStrip({
   races,
   selectedIds,
   leaderChanges,
+  candidatePhotoLookup,
   onAdd,
+  onShare,
   onOpenAll,
   onDismiss
 }: {
   races: ConstituencySummary[];
   selectedIds: string[];
   leaderChanges: ConstituencyResult[];
+  candidatePhotoLookup: Map<string, string>;
   onAdd: (summary: ConstituencySummary) => void;
+  onShare: (summary: ConstituencySummary) => void;
   onOpenAll: () => void;
   onDismiss: () => void;
 }) {
   const changed = useMemo(() => new Set(leaderChanges.map((item) => item.constituencyId)), [leaderChanges]);
   return (
-    <section className="mb-5 rounded-md border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 p-4 dark:border-amber-900 dark:from-amber-950/40 dark:via-zinc-950 dark:to-rose-950/30">
+    <section className="animate-refresh-wave relative mb-5 rounded-md border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 p-4 dark:border-amber-900 dark:from-amber-950/40 dark:via-zinc-950 dark:to-rose-950/30">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">Battleground Races</div>
@@ -3806,25 +3887,81 @@ function BattlegroundStrip({
           const selected = selectedIds.includes(summary.constituencyId);
           const severity = battlegroundSeverity(summary);
           const leadChanged = changed.has(summary.constituencyId);
+          const leaderPhoto = candidatePhotoLookup.get(`${summary.constituencyId}:${normalizeCandidateName(summary.leadingCandidate)}`);
+          const trailingPhoto = candidatePhotoLookup.get(`${summary.constituencyId}:${normalizeCandidateName(summary.trailingCandidate)}`);
           return (
-            <div key={summary.constituencyId} className="rounded-md border border-amber-200 bg-white/90 p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/90">
+            <div key={summary.constituencyId} className="group relative overflow-hidden rounded-md border border-amber-200 bg-[radial-gradient(circle_at_left,rgba(34,197,94,0.12),transparent_35%),radial-gradient(circle_at_right,rgba(244,63,94,0.14),transparent_35%),linear-gradient(160deg,rgba(255,255,255,0.95),rgba(255,255,255,0.86))] p-3 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-lg motion-reduce:transform-none dark:border-zinc-800 dark:bg-[radial-gradient(circle_at_left,rgba(34,197,94,0.18),transparent_35%),radial-gradient(circle_at_right,rgba(244,63,94,0.18),transparent_35%),linear-gradient(160deg,rgba(9,9,11,0.96),rgba(9,9,11,0.9))]">
+              <div className="pointer-events-none absolute inset-0 opacity-100 motion-reduce:transition-none">
+                <div className="absolute inset-y-0 left-[-35%] w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-white/12 to-transparent opacity-40 motion-safe:animate-[pulse_6s_ease-in-out_infinite] dark:via-white/8" />
+              </div>
+              <div className="pointer-events-none absolute inset-0 opacity-0 transition duration-300 group-hover:opacity-100 motion-reduce:transition-none">
+                <div className="absolute inset-y-0 left-[-30%] w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-white/20 to-transparent motion-safe:animate-pulse dark:via-white/10" />
+              </div>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-base font-black text-zinc-950 dark:text-white">{summary.constituencyName}</div>
-                  <div className="mt-1 text-xs font-semibold text-zinc-500">
-                    {shortPartyName(summary.leadingParty || "Leader")} +{formatNumber(summary.margin)}
-                    {summary.trailingParty ? ` vs ${shortPartyName(summary.trailingParty)}` : ""}
+                  <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                    Closest contest right now
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  {leadChanged && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-900 dark:bg-sky-900/60 dark:text-sky-100">Lead changed</span>}
+                  <button
+                    className="btn-press inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300/70 bg-white/80 text-zinc-700 hover:bg-white dark:border-zinc-700 dark:bg-zinc-950/80 dark:text-zinc-200 dark:hover:bg-zinc-950"
+                    onClick={() => onShare(summary)}
+                    type="button"
+                    title="Share this race"
+                    aria-label="Share this race"
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                  </button>
+                  {leadChanged && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-900 motion-safe:animate-pulse dark:bg-sky-900/60 dark:text-sky-100">Lead changed</span>}
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${severity.tone}`}>
                     {severity.label}
                   </span>
                 </div>
               </div>
+              <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-full motion-safe:animate-[pulse_4.8s_ease-in-out_infinite]">
+                      <CandidatePhoto
+                        candidateName={summary.leadingCandidate || "Leader"}
+                        photoUrl={leaderPhoto}
+                        size="mini"
+                        tone="leading"
+                        crowned={isDeclaredWinner(summary.statusText || summary.roundStatus)}
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-zinc-950 dark:text-white">{summary.leadingCandidate || "Leader"}</div>
+                      <div className="truncate text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">{shortPartyName(summary.leadingParty || "Leader")}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[10px] font-black uppercase tracking-[0.22em] text-zinc-500">Margin</div>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-[-10px] rounded-full bg-amber-300/20 blur-md motion-safe:animate-[pulse_5.6s_ease-in-out_infinite]" />
+                    <div className={`relative text-2xl font-black leading-none text-amber-500 dark:text-amber-300 ${summary.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "motion-safe:animate-pulse" : ""}`}>{formatNumber(summary.margin)}</div>
+                  </div>
+                </div>
+                <div className="min-w-0 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-zinc-950 dark:text-white">{summary.trailingCandidate || "Runner-up"}</div>
+                      <div className="truncate text-[10px] font-semibold text-rose-700 dark:text-rose-300">{shortPartyName(summary.trailingParty || "Runner-up")}</div>
+                    </div>
+                    <CandidatePhoto
+                      candidateName={summary.trailingCandidate || "Runner-up"}
+                      photoUrl={trailingPhoto}
+                      size="mini"
+                      tone="trailing"
+                    />
+                  </div>
+                </div>
+              </div>
               <div className="mt-3 flex items-center justify-between gap-2">
-                <div className="text-[11px] font-semibold text-zinc-500">
+                <div className="text-[11px] font-semibold text-zinc-500 transition group-hover:text-zinc-700 dark:group-hover:text-zinc-300">
                   {isDeclaredWinner(summary.statusText || summary.roundStatus) ? "Declared result" : summary.roundStatus || summary.statusText || "Counting"}
                 </div>
                 {selected ? (
@@ -3847,14 +3984,18 @@ function BattlegroundModal({
   races,
   selectedIds,
   leaderChanges,
+  candidatePhotoLookup,
   onAdd,
+  onShareRace,
   onShare,
   onClose
 }: {
   races: ConstituencySummary[];
   selectedIds: string[];
   leaderChanges: ConstituencyResult[];
+  candidatePhotoLookup: Map<string, string>;
   onAdd: (summary: ConstituencySummary) => void;
+  onShareRace: (summary: ConstituencySummary) => void;
   onShare: () => void;
   onClose: () => void;
 }) {
@@ -3886,23 +4027,79 @@ function BattlegroundModal({
               const severity = battlegroundSeverity(summary);
               const selected = selectedIds.includes(summary.constituencyId);
               const leadChanged = changed.has(summary.constituencyId);
+              const leaderPhoto = candidatePhotoLookup.get(`${summary.constituencyId}:${normalizeCandidateName(summary.leadingCandidate)}`);
+              const trailingPhoto = candidatePhotoLookup.get(`${summary.constituencyId}:${normalizeCandidateName(summary.trailingCandidate)}`);
               return (
-                <div key={summary.constituencyId} className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+                <div key={summary.constituencyId} className="group relative overflow-hidden rounded-md border border-zinc-200 bg-[radial-gradient(circle_at_left,rgba(34,197,94,0.12),transparent_30%),radial-gradient(circle_at_right,rgba(244,63,94,0.14),transparent_30%),linear-gradient(160deg,rgba(255,255,255,0.96),rgba(255,255,255,0.92))] p-4 transition duration-300 hover:-translate-y-0.5 hover:shadow-lg motion-reduce:transform-none dark:border-zinc-800 dark:bg-[radial-gradient(circle_at_left,rgba(34,197,94,0.18),transparent_35%),radial-gradient(circle_at_right,rgba(244,63,94,0.18),transparent_35%),linear-gradient(160deg,rgba(9,9,11,0.96),rgba(9,9,11,0.92))]">
+                  <div className="pointer-events-none absolute inset-0 opacity-100 motion-reduce:transition-none">
+                    <div className="absolute inset-y-0 left-[-30%] w-1/4 -skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-40 motion-safe:animate-[pulse_6.5s_ease-in-out_infinite] dark:via-white/8" />
+                  </div>
+                  <div className="pointer-events-none absolute inset-0 opacity-0 transition duration-300 group-hover:opacity-100 motion-reduce:transition-none">
+                    <div className="absolute inset-y-0 left-[-25%] w-1/4 -skew-x-12 bg-gradient-to-r from-transparent via-white/15 to-transparent motion-safe:animate-pulse dark:via-white/10" />
+                  </div>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-lg font-black text-zinc-950 dark:text-white">{summary.constituencyName}</div>
                       <div className="mt-1 text-xs font-semibold text-zinc-500">AC {summary.constituencyNumber}</div>
                     </div>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${severity.tone}`}>{severity.label}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="btn-press inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-300/70 bg-white/80 text-zinc-700 hover:bg-white dark:border-zinc-700 dark:bg-zinc-950/80 dark:text-zinc-200 dark:hover:bg-zinc-950"
+                        onClick={() => onShareRace(summary)}
+                        type="button"
+                        title="Share this race"
+                        aria-label="Share this race"
+                      >
+                        <Share2 className="h-4 w-4" />
+                      </button>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${severity.tone} ${summary.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "motion-safe:animate-pulse" : ""}`}>{severity.label}</span>
+                    </div>
                   </div>
-                  <div className="mt-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-                    {shortPartyName(summary.leadingParty || "Leader")} leads by <span className="font-black text-zinc-950 dark:text-white">{formatNumber(summary.margin)}</span>
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-col items-start gap-2">
+                        <div className="rounded-full motion-safe:animate-[pulse_4.8s_ease-in-out_infinite]">
+                          <CandidatePhoto
+                            candidateName={summary.leadingCandidate || "Leader"}
+                            photoUrl={leaderPhoto}
+                            size="small"
+                            tone="leading"
+                            crowned={isDeclaredWinner(summary.statusText || summary.roundStatus)}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="line-clamp-2 text-sm font-black leading-tight text-zinc-950 dark:text-white">{summary.leadingCandidate || "Leader"}</div>
+                          <div className="mt-1 truncate text-xs font-semibold text-emerald-700 dark:text-emerald-300">{shortPartyName(summary.leadingParty || "Leader")}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] font-black uppercase tracking-[0.22em] text-zinc-500">Margin</div>
+                      <div className="relative mt-1">
+                        <div className="pointer-events-none absolute inset-[-12px] rounded-full bg-amber-300/20 blur-lg motion-safe:animate-[pulse_5.6s_ease-in-out_infinite]" />
+                        <div className={`relative text-4xl font-black leading-none text-amber-500 dark:text-amber-300 ${summary.margin <= HIGH_TIGHT_MARGIN_LIMIT ? "motion-safe:animate-pulse" : ""}`}>{formatNumber(summary.margin)}</div>
+                      </div>
+                    </div>
+                    <div className="min-w-0 text-right">
+                      <div className="flex flex-col items-end gap-2">
+                        <CandidatePhoto
+                          candidateName={summary.trailingCandidate || "Runner-up"}
+                          photoUrl={trailingPhoto}
+                          size="small"
+                          tone="trailing"
+                        />
+                        <div className="min-w-0">
+                          <div className="line-clamp-2 text-sm font-black leading-tight text-zinc-950 dark:text-white">{summary.trailingCandidate || "Runner-up"}</div>
+                          <div className="mt-1 truncate text-xs font-semibold text-rose-700 dark:text-rose-300">{shortPartyName(summary.trailingParty || "Runner-up")}</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Against {shortPartyName(summary.trailingParty || "Runner-up")}
+                  <div className="mt-3 rounded-md border border-white/10 bg-black/10 px-3 py-2 text-center text-sm font-semibold text-zinc-700 dark:bg-white/5 dark:text-zinc-200">
+                    {shortPartyName(summary.leadingParty || "Leader")} {isDeclaredWinner(summary.statusText || summary.roundStatus) ? "won by" : "leading by"} {formatNumber(summary.margin)} votes against {shortPartyName(summary.trailingParty || "Runner-up")}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {leadChanged && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-900 dark:bg-sky-900/60 dark:text-sky-100">Lead changed</span>}
+                    {leadChanged && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-900 motion-safe:animate-pulse dark:bg-sky-900/60 dark:text-sky-100">Lead changed</span>}
                     {summary.margin <= HIGH_TIGHT_MARGIN_LIMIT && (
                       <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-900 dark:bg-rose-900/60 dark:text-rose-100">Recount risk</span>
                     )}
@@ -3912,7 +4109,7 @@ function BattlegroundModal({
                   </div>
                   <div className="mt-4 flex items-center justify-between gap-2">
                     <div className="text-[11px] font-semibold text-zinc-500">
-                      {summary.leadingCandidate || "Leader"}{summary.trailingCandidate ? ` vs ${summary.trailingCandidate}` : ""}
+                      {isDeclaredWinner(summary.statusText || summary.roundStatus) ? "Final head-to-head" : "Live head-to-head"}
                     </div>
                     {selected ? (
                       <span className="rounded-md bg-emerald-100 px-2 py-1 text-[10px] font-black uppercase text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100">Already tracking</span>
@@ -4572,7 +4769,7 @@ function ResultCard({
   return (
     <article
       key={`${result.constituencyId}-${checkedAt ?? 0}`}
-      className={`panel animate-card-refresh relative w-full min-w-0 max-w-full cursor-pointer overflow-visible rounded-md transition hover:shadow-xl hover:shadow-black/10 focus-within:ring-2 focus-within:ring-emerald-400 ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}
+      className={`panel animate-card-refresh animate-refresh-wave relative w-full min-w-0 max-w-full cursor-pointer overflow-visible rounded-md transition hover:shadow-xl hover:shadow-black/10 focus-within:ring-2 focus-within:ring-emerald-400 ${veryCloseFight ? "animate-close-fight ring-2 ring-rose-600" : closeFight ? "animate-close-watch ring-2 ring-amber-500" : ""}`}
       role="link"
       tabIndex={0}
       aria-label={`Open ${result.constituencyName} constituency detail page`}
@@ -4787,6 +4984,31 @@ function HistoryTooltip({
   onOpen: () => void;
 }) {
   const hasContext = history.length > 0 || Boolean(seatHistory?.entries.length || seatHistory?.contextNote);
+  const orderedHistory = useMemo(() => [...history].sort((left, right) => right.at - left.at), [history]);
+  const latestEntry = orderedHistory[0];
+  const uniqueLeaders = useMemo(() => {
+    return new Set(
+      orderedHistory.map((entry) => `${normalizeCandidateName(entry.leader)}|${entry.party}`)
+    );
+  }, [orderedHistory]);
+  const compactHistory = useMemo(() => {
+    const items: LeaderHistoryEntry[] = [];
+    for (const entry of orderedHistory) {
+      const previous = items[items.length - 1];
+      if (
+        previous &&
+        normalizeCandidateName(previous.leader) === normalizeCandidateName(entry.leader) &&
+        previous.party === entry.party
+      ) {
+        continue;
+      }
+      items.push(entry);
+      if (items.length >= 3) break;
+    }
+    return items;
+  }, [orderedHistory]);
+  const hasLeadChangeHistory = uniqueLeaders.size > 1;
+
   return (
     <div className="group relative">
       <button
@@ -4801,18 +5023,36 @@ function HistoryTooltip({
       <div className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-64 max-w-[calc(100vw-2rem)] rounded-md border border-zinc-200 bg-white p-3 text-left shadow-lg group-hover:block group-focus-within:block dark:border-zinc-800 dark:bg-zinc-950">
         <div className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Live + seat context</div>
         {history.length ? (
-          <div className="mt-2 space-y-2">
-            {history.map((entry) => (
-              <div key={`${entry.at}-${entry.leader}`} className="text-xs">
-                <div className="font-black text-zinc-950 dark:text-white">{entry.leader}</div>
-                <div className="text-zinc-500">
-                  {shortPartyName(entry.party)} by {formatNumber(entry.margin)} at {new Date(entry.at).toLocaleTimeString()}
+          hasLeadChangeHistory ? (
+            <div className="mt-2 space-y-2">
+              {compactHistory.map((entry) => (
+                <div key={`${entry.at}-${entry.leader}`} className="text-xs">
+                  <div className="font-black text-zinc-950 dark:text-white">{entry.leader}</div>
+                  <div className="text-zinc-500">
+                    {shortPartyName(entry.party)} by {formatNumber(entry.margin)} at {new Date(entry.at).toLocaleTimeString()}
+                  </div>
                 </div>
+              ))}
+              {orderedHistory.length > compactHistory.length && (
+                <div className="text-[11px] font-semibold text-zinc-500">
+                  Open seat context for the full replay.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-2 space-y-1.5 text-xs">
+              <div className="font-black text-zinc-950 dark:text-white">
+                {/\b(won|declared)\b/i.test(latestEntry?.status || "") ? "No lead changes recorded" : "No lead change yet"}
               </div>
-            ))}
-          </div>
+              {latestEntry ? (
+                <div className="text-zinc-500">
+                  {latestEntry.leader} · {shortPartyName(latestEntry.party)} by {formatNumber(latestEntry.margin)}
+                </div>
+              ) : null}
+            </div>
+          )
         ) : (
-          <div className="mt-2 text-xs text-zinc-500">No live movement recorded in this browser yet.</div>
+          <div className="mt-2 text-xs text-zinc-500">No live movement recorded yet.</div>
         )}
         {seatHistory?.entries.length ? (
           <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">

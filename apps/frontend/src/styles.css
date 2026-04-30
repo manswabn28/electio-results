@@ -121,6 +121,50 @@ button:disabled {
   animation: card-refresh-pulse 900ms ease-out;
 }
 
+@keyframes refresh-wave-sheen {
+  0% {
+    opacity: 0;
+    transform: translate3d(-130%, -18%, 0) rotate(-18deg);
+  }
+  18% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 0.28;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(155%, 18%, 0) rotate(-18deg);
+  }
+}
+
+.animate-refresh-wave {
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.animate-refresh-wave::after {
+  content: "";
+  position: absolute;
+  inset: -24%;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    transparent 32%,
+    rgba(255, 255, 255, 0.06) 42%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.06) 58%,
+    transparent 68%,
+    transparent 100%
+  );
+  mix-blend-mode: screen;
+  transform: translate3d(-130%, -18%, 0) rotate(-18deg);
+  will-change: transform, opacity;
+  animation: refresh-wave-sheen 1900ms cubic-bezier(0.18, 0.72, 0.22, 1);
+}
+
 @keyframes close-watch-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 18px 40px rgba(15, 23, 42, 0.08);
@@ -195,6 +239,10 @@ button:disabled {
   animation: summary-refresh-pulse 900ms ease-out;
 }
 
+.animate-summary-wave-refresh {
+  animation: summary-refresh-pulse 900ms ease-out;
+}
+
 @keyframes party-card-refresh-pulse {
   0% {
     box-shadow: 0 0 0 4px rgba(4, 120, 87, 0.55), 0 0 22px rgba(4, 120, 87, 0.38);
@@ -210,6 +258,16 @@ button:disabled {
 
 .animate-party-card-refresh {
   animation: party-card-refresh-pulse 900ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-refresh-wave::after {
+    animation: none;
+  }
+
+  .animate-summary-wave-refresh {
+    animation: none;
+  }
 }
 
 @keyframes value-change-glow {

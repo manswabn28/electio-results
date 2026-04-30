@@ -161,7 +161,7 @@ export function ConstituencyDetailPage({
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_360px]">
           <div className="space-y-6">
-            <CurrentBattlePanel detail={detail} />
+            <CurrentBattlePanel detail={detail} onShare={() => onGenerateShareCard(detail)} />
             {!declared && prediction ? <PredictionMeter prediction={prediction} leader={leader} /> : <FinalResultPanel detail={detail} />}
             <LiveTimeline timeline={detail.timeline} />
             <FullCandidateList candidates={detail.candidates} declared={declared} />
@@ -299,39 +299,79 @@ function CandidateBattleCard({
   );
 }
 
-function CurrentBattlePanel({ detail }: { detail: ConstituencyDetailResponse }) {
+function CurrentBattlePanel({ detail, onShare }: { detail: ConstituencyDetailResponse; onShare: () => void }) {
   const leader = detail.candidates[0];
   const runnerUp = detail.candidates[1];
   if (!leader || !runnerUp) return null;
+  const declared = detail.result.declared;
   return (
-    <section className="panel rounded-md border border-white/10 bg-zinc-950/70 p-4 backdrop-blur">
-      <div className="flex items-center gap-2">
-        <Flame className="h-4 w-4 text-amber-300" />
-        <h2 className="text-lg font-black text-white">Current Battle</h2>
+    <section className="panel overflow-hidden rounded-md border border-white/10 bg-[radial-gradient(circle_at_left,rgba(34,197,94,0.16),transparent_28%),radial-gradient(circle_at_right,rgba(244,63,94,0.18),transparent_28%),linear-gradient(160deg,#09090b,#111827)] p-4 backdrop-blur">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Flame className="h-4 w-4 text-amber-300" />
+          <h2 className="text-lg font-black text-white">Current Battle</h2>
+        </div>
+        <button
+          className="btn-press inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10"
+          onClick={onShare}
+          type="button"
+          title="Share this constituency card"
+          aria-label="Share this constituency card"
+        >
+          <Share2 className="h-4 w-4" />
+        </button>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <BattleMetricCard
-          title={detail.result.declared ? "Won by" : "Leading by"}
-          value={`${formatNumber(detail.result.margin)} votes`}
-          body={`${leader.name} is ahead of ${runnerUp.name}.`}
-        />
-        <BattleMetricCard
-          title={detail.result.declared ? "Runner-up gap" : "Trailing by"}
-          value={`${formatNumber(runnerUp.marginFromLeader ?? detail.result.margin)} votes`}
-          body={`${runnerUp.name} is ${detail.result.declared ? "finishing" : "currently"} behind.`}
-        />
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_minmax(0,1fr)] lg:items-center">
+        <BattleFaceoffCard candidate={leader} side="leading" declared={declared} />
+        <div className="rounded-md border border-amber-300/35 bg-amber-300/10 px-4 py-5 text-center shadow-[0_0_30px_rgba(252,211,77,0.14)]">
+          <div className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-200">
+            {declared ? "Won margin" : "Lead margin"}
+          </div>
+          <div className="mt-2 text-5xl font-black leading-none text-amber-300">{formatNumber(detail.result.margin)}</div>
+          <div className="mt-2 text-xs font-black uppercase tracking-[0.22em] text-zinc-300">
+            {declared ? "Winner declared" : "Battle in progress"}
+          </div>
+        </div>
+        <BattleFaceoffCard candidate={runnerUp} side="trailing" declared={declared} />
       </div>
     </section>
   );
 }
 
-function BattleMetricCard({ title, value, body }: { title: string; value: string; body: string }) {
+function BattleFaceoffCard({
+  candidate,
+  side,
+  declared
+}: {
+  candidate: ConstituencyDetailCandidate;
+  side: "leading" | "trailing";
+  declared: boolean;
+}) {
+  const tone = side === "leading" ? "border-emerald-400/30 bg-emerald-500/10" : "border-rose-400/30 bg-rose-500/10";
+  const label = declared ? (side === "leading" ? "Winner" : "Runner-up") : side === "leading" ? "Leading" : "Trailing";
   return (
-    <div className="rounded-md border border-white/10 bg-white/5 p-4">
-      <div className="text-[11px] font-black uppercase tracking-[0.22em] text-zinc-400">{title}</div>
-      <div className="mt-1 text-2xl font-black text-white">{value}</div>
-      <div className="mt-2 text-sm text-zinc-300">{body}</div>
-    </div>
+    <article className={`rounded-md border ${tone} p-4`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <CandidateAvatar name={candidate.name} photoUrl={candidate.photoUrl} />
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">{label}</div>
+            <div className="mt-1 text-lg font-black leading-tight text-white">{candidate.name}</div>
+            <div className={`mt-1 text-xs font-semibold ${side === "leading" ? "text-emerald-300" : "text-rose-300"}`}>{candidate.partyCode} · {candidate.partyName}</div>
+          </div>
+        </div>
+        {declared && side === "leading" ? <Crown className="h-5 w-5 text-amber-300" /> : null}
+      </div>
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div>
+          <div className="text-3xl font-black text-white">{formatNumber(candidate.votes)}</div>
+          <div className="text-xs font-black uppercase tracking-[0.22em] text-zinc-400">{candidate.voteShare.toFixed(2)}% vote share</div>
+        </div>
+        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-200">
+          {side === "leading" ? "Ahead" : "Chasing"}
+        </div>
+      </div>
+    </article>
   );
 }
 
