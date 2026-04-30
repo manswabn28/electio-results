@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { Coins, Focus, Landmark, ShieldCheck } from "lucide-react";
-import { applySeo } from "./seo";
 import { trackPageView } from "./analytics";
 import { ContentCard } from "./ContentCard";
 import { Footer } from "./Footer";
+import { SeoMeta } from "./SeoMeta";
 import { StaticPageHero } from "./StaticPageHero";
 
 type AboutUsPageProps = {
@@ -37,20 +37,16 @@ const MISSION_CARDS = [
 export function AboutUsPage({ onBack, onNavigate }: AboutUsPageProps) {
   useEffect(() => {
     const title = "About Us | OneKerala Results";
-    const description =
-      "Learn about OneKerala Results, an independent, free, self-funded election results tracking platform built to make official election result information easier to follow.";
-    applySeo({
-      title,
-      description,
-      path: "/about-us",
-      ogTitle: title,
-      ogDescription: description
-    });
     trackPageView(title);
   }, []);
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
+      <SeoMeta
+        title="About Us | OneKerala Results"
+        description="Learn about OneKerala Results, an independent, free, self-funded election results tracking platform built to make official election result information easier to follow."
+        path="/about-us"
+      />
       <StaticPageHero
         eyebrow="About Us"
         title="About OneKerala Results"

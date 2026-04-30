@@ -3,7 +3,7 @@ import { Mail, MessageSquareWarning, Wrench } from "lucide-react";
 import { trackPageView } from "./analytics";
 import { ContentCard } from "./ContentCard";
 import { Footer } from "./Footer";
-import { applySeo } from "./seo";
+import { SeoMeta } from "./SeoMeta";
 import { StaticPageHero } from "./StaticPageHero";
 
 type ContactUsPageProps = {
@@ -18,15 +18,6 @@ export function ContactUsPage({ onBack, onNavigate }: ContactUsPageProps) {
 
   useEffect(() => {
     const title = "Contact Us | OneKerala Results";
-    const description =
-      "Contact OneKerala Results for feedback, corrections, technical issues, legal concerns, or suggestions.";
-    applySeo({
-      title,
-      description,
-      path: "/contact-us",
-      ogTitle: title,
-      ogDescription: description
-    });
     trackPageView(title);
   }, []);
 
@@ -37,6 +28,11 @@ export function ContactUsPage({ onBack, onNavigate }: ContactUsPageProps) {
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
+      <SeoMeta
+        title="Contact Us | OneKerala Results"
+        description="Contact OneKerala Results for feedback, corrections, technical issues, legal concerns, or suggestions."
+        path="/contact-us"
+      />
       <StaticPageHero
         eyebrow="Contact Us"
         title="Contact Us"

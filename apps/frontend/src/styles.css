@@ -124,17 +124,17 @@ button:disabled {
 @keyframes refresh-wave-sheen {
   0% {
     opacity: 0;
-    transform: translate3d(-130%, -18%, 0) rotate(-18deg);
+    transform: translate3d(-145%, -22%, 0) rotate(-18deg);
   }
-  18% {
-    opacity: 0.18;
+  14% {
+    opacity: 0.14;
   }
   50% {
-    opacity: 0.28;
+    opacity: 0.24;
   }
   100% {
     opacity: 0;
-    transform: translate3d(155%, 18%, 0) rotate(-18deg);
+    transform: translate3d(175%, 22%, 0) rotate(-18deg);
   }
 }
 
@@ -146,23 +146,40 @@ button:disabled {
 .animate-refresh-wave::after {
   content: "";
   position: absolute;
-  inset: -24%;
+  inset: -32%;
   pointer-events: none;
   opacity: 0;
   background: linear-gradient(
     115deg,
     transparent 0%,
-    transparent 32%,
-    rgba(255, 255, 255, 0.06) 42%,
-    rgba(255, 255, 255, 0.22) 50%,
-    rgba(255, 255, 255, 0.06) 58%,
-    transparent 68%,
+    transparent 24%,
+    rgba(7, 4, 4, 0.07) 34%,
+    rgba(7, 4, 4, 0.14) 42%,
+    rgba(7, 4, 4, 0.24) 50%,
+    rgba(7, 4, 4, 0.14) 58%,
+    rgba(7, 4, 4, 0.07) 66%,
+    transparent 76%,
     transparent 100%
   );
   mix-blend-mode: screen;
-  transform: translate3d(-130%, -18%, 0) rotate(-18deg);
+  transform: translate3d(-145%, -22%, 0) rotate(-18deg);
   will-change: transform, opacity;
-  animation: refresh-wave-sheen 1900ms cubic-bezier(0.18, 0.72, 0.22, 1);
+  animation: refresh-wave-sheen 6800ms cubic-bezier(0.16, 0.68, 0.2, 1);
+}
+
+.dark .animate-refresh-wave::after {
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    transparent 22%,
+    rgba(255, 255, 255, 0.08) 32%,
+    rgba(255, 255, 255, 0.18) 41%,
+    rgba(255, 255, 255, 0.30) 50%,
+    rgba(255, 255, 255, 0.18) 59%,
+    rgba(255, 255, 255, 0.08) 68%,
+    transparent 78%,
+    transparent 100%
+  );
 }
 
 @keyframes close-watch-pulse {

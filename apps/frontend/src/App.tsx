@@ -8,7 +8,8 @@ import { apiBaseForDiagnostics, applyDiscoveredSource, chatStreamUrl, createTele
 import { downloadCsv, downloadJson } from "./export";
 import { playChatMessageAlert, playLeaderAlert, primeAudioAlerts, useCountdown, useLocalStorageState, usePreviousMap } from "./hooks";
 import { initAnalytics, trackEvent, trackPageView } from "./analytics";
-import { applySeo } from "./seo";
+import { canonicalFor } from "./seo";
+import { SeoMeta } from "./SeoMeta";
 import { ElectionBattleShareCard } from "./ElectionBattleShareCard";
 import { buildElectionBattleShareCardPropsFromResult } from "./shareCardExport";
 import { FinalVictoryShareCard, PartySummaryShareCard } from "./SharePremiumCards";
@@ -27,6 +28,8 @@ const TIGHT_RACE_NOTIFY_MIN_PROGRESS = 25;
 const ADMIN_PASSWORD = "ldfudf#2026";
 const KERALA_COUNTING_START_AT = "2026-05-04T06:00:00+05:30";
 const VICTORY_OVERLAY_AUTO_CLOSE_MS = 18000;
+const HOME_SEO_TITLE = "Kerala Election Result 2026 Live | Constituency Wise Results";
+const HOME_SEO_DESCRIPTION = "Track Kerala Assembly Election Result 2026 live with constituency-wise results, candidates, winning margin, party tally, battleground seats, and live updates.";
 
 const LIVE_CHANNELS = [
   { id: "reporter-tv", label: "Reporter Live", videoId: "nObUcHKZEGY" },
@@ -135,7 +138,7 @@ export function App() {
   const [hasBootstrappedFavorites, setHasBootstrappedFavorites] = useState(() =>
     localStorage.getItem(SELECTED_STORAGE_KEY) !== null
   );
-  const [sortMode, setSortMode] = useLocalStorageState<SortMode>("kerala-election:sort-mode", "selected");
+  const [sortMode, setSortMode] = useLocalStorageState<SortMode>("kerala-election:sort-mode", "marginAsc");
   const [darkMode, setDarkMode] = useLocalStorageState<boolean>("kerala-election:dark-mode", true);
   const [soundEnabled, setSoundEnabled] = useLocalStorageState<boolean>("kerala-election:sound", false);
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState<boolean>("kerala-election:sidebar-collapsed", false);
@@ -219,22 +222,12 @@ export function App() {
 
   useEffect(() => {
     initAnalytics();
-    if (appRoute.kind === "constituency") return;
-    const selectedCount = selectedIds.length;
-    applySeo({
-      title: appView === "help"
-        ? "Election Tracker Help | User Manual & FAQ"
-        : selectedCount
-          ? `${selectedCount} Constituencies Tracked | Kerala Election Live`
-          : "Kerala Assembly Election 2026 Live Tracker",
-      description: appView === "help"
-        ? "Complete user manual for the election tracker, including features, alerts, watch mode, admin controls, limitations, and FAQ."
-        : selectedCount
-          ? `Live ECI-backed Kerala Assembly Election results for ${selectedCount} selected constituencies, including candidate leads, margins, party totals, and updates.`
-          : undefined
-    });
-    trackPageView(document.title);
-  }, [appRoute.kind, appView, selectedIds.length]);
+  }, []);
+
+  useEffect(() => {
+    if (appRoute.kind === "constituency" || appRoute.kind === "about" || appRoute.kind === "contact" || appRoute.kind === "terms") return;
+    trackPageView(appView === "help" ? "Election Tracker Help | User Manual & FAQ" : HOME_SEO_TITLE);
+  }, [appRoute.kind, appView]);
 
   useEffect(() => {
     if (!watchMode || !("wakeLock" in navigator)) return;
@@ -1128,6 +1121,25 @@ export function App() {
     };
   }, [activeProfile?.electionTitle, allSummaryQuery.data?.results, constituencyOptions.length, partySummaryQuery.data?.parties, sourceConfigQuery.data?.activeTitle]);
   const sortedResults = sortResults(visibleResults, selectedIds, sortMode, pinnedIds, autoAttentionIds);
+  const topSeoConstituencies = useMemo(
+    () => constituencyOptions.filter((option) => option.isFavoriteDefault).slice(0, 12),
+    [constituencyOptions]
+  );
+  const popularSeoConstituencies = useMemo(
+    () => constituencyOptions.slice(0, 18),
+    [constituencyOptions]
+  );
+  const battlegroundSeoConstituencies = useMemo(
+    () => battlegroundRaces.slice(0, 12).map((item) => ({
+      constituencyId: item.constituencyId,
+      constituencyName: item.constituencyName
+    })),
+    [battlegroundRaces]
+  );
+  const allSeoConstituencies = useMemo(
+    () => [...constituencyOptions].sort((left, right) => left.constituencyName.localeCompare(right.constituencyName)),
+    [constituencyOptions]
+  );
   const hasSourceWarning = Boolean(constituenciesQuery.data?.warning || summaryQuery.data?.errors?.length);
   const lastEciChangeAt = latestDataUpdatedAt(Object.values(lastChangedAt));
   const sourceHealth = hasSourceWarning || partySummaryQuery.isError || resultQueries.some((query) => query.isError)
@@ -1398,6 +1410,27 @@ export function App() {
 
   return (
     <>
+    <SeoMeta
+      title={HOME_SEO_TITLE}
+      description={HOME_SEO_DESCRIPTION}
+      path="/"
+      jsonLd={[
+        {
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: HOME_SEO_TITLE,
+          description: HOME_SEO_DESCRIPTION,
+          url: canonicalFor("/")
+        },
+        {
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          name: "Kerala Assembly Election constituency wise results",
+          description: HOME_SEO_DESCRIPTION,
+          url: canonicalFor("/")
+        }
+      ]}
+    />
     <main className="min-h-screen max-w-full overflow-x-hidden">
       {(showOldResultNotice || showCountingCountdown) && (
         <OldResultNotice showBanner={showOldResultNotice} showCountdown={showCountingCountdown} />
@@ -1589,6 +1622,150 @@ export function App() {
                 }}
               />
             )}
+            {!sidebarCollapsed && (
+              <div id="controls-pane" className="flex flex-col gap-4">
+                <div className="panel rounded-md p-4">
+                  <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="sort">Sort cards</label>
+                  <select
+                    id="sort"
+                    className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
+                    value={sortMode}
+                    onChange={(event) => setSortMode(event.target.value as SortMode)}
+                  >
+                    <option value="selected">Selected order</option>
+                    <option value="marginAsc">Closest margins first</option>
+                    <option value="marginDesc">Largest leads first</option>
+                    <option value="leader">Leading candidate</option>
+                  </select>
+                  <label className="mt-3 block text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="party-filter">Watch group</label>
+                  <select
+                    id="party-filter"
+                    className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
+                    value={partyFilter}
+                    onChange={(event) => setPartyFilter(event.target.value)}
+                  >
+                    <option value="all">All selected</option>
+                    <option value="close">Close fights</option>
+                    {partyOptions.map((party) => (
+                      <option key={party} value={party}>{party}</option>
+                    ))}
+                  </select>
+                  {hiddenByWatchGroupCount > 0 && (
+                    <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                      {formatNumber(hiddenByWatchGroupCount)} selected {hiddenByWatchGroupCount === 1 ? "seat is" : "seats are"} hidden by the current watch group.
+                    </div>
+                  )}
+                  <div className="mt-4 flex gap-2">
+                    <button className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => downloadJson(results)} disabled={!results.length}>
+                      <Download className="mr-2 inline h-4 w-4" />
+                      JSON
+                    </button>
+                    <button className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => downloadCsv(results)} disabled={!results.length}>
+                      <Download className="mr-2 inline h-4 w-4" />
+                      CSV
+                    </button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                    <label className="sr-only" htmlFor="alert-threshold">Close alert margin</label>
+                    <input
+                      id="alert-threshold"
+                      type="number"
+                      min={100}
+                      step={100}
+                      className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
+                      value={alertThreshold}
+                      onChange={(event) => setAlertThreshold(Number(event.target.value.replace(/\D/g, "")) || 1000)}
+                      title="Close alert margin"
+                    />
+                    <button className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={shareView} title="Copy share link">
+                      <Share2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-1.5">
+                    <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-800 active:scale-[0.98] active:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-200" onClick={() => applySeatPreset("favorites")}>
+                      Key
+                    </button>
+                    <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-amber-500 hover:bg-amber-50 hover:text-amber-800 active:scale-[0.98] active:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-amber-700 dark:hover:bg-amber-950/50 dark:hover:text-amber-200" onClick={() => applySeatPreset("tight")}>
+                      Tight
+                    </button>
+                    <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-sky-500 hover:bg-sky-50 hover:text-sky-800 active:scale-[0.98] active:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/50 dark:hover:text-sky-200" onClick={() => applySeatPreset("leaders")}>
+                      Leads
+                    </button>
+                  </div>
+                  <AlertRulesControl rules={alertRules} onChange={setAlertRules} />
+                  <WatchProfiles
+                    name={profileName}
+                    profiles={watchProfiles}
+                    onNameChange={setProfileName}
+                    onSave={saveWatchProfile}
+                    onLoad={loadWatchProfile}
+                  />
+                  <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-black uppercase tracking-wide text-sky-800 dark:text-sky-200">Telegram alerts</div>
+                        <div className="mt-1 text-xs font-semibold text-sky-900 dark:text-sky-100">
+                          {telegramStatusQuery.data?.linked
+                            ? `Linked to ${telegramStatusQuery.data.chatLabel || "Telegram"}.`
+                            : "Get lead changes, winners, and tight-race alerts on Telegram."}
+                        </div>
+                      </div>
+                      <button
+                        className="btn-press rounded-md border border-sky-300 bg-white px-3 py-2 text-xs font-black uppercase text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
+                        onClick={() => telegramLinkMutation.mutate()}
+                        disabled={telegramLinkMutation.isPending || !effectiveProfileId}
+                        type="button"
+                        title="Get Telegram alerts"
+                      >
+                        <TelegramIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="mt-2 text-[11px] text-sky-800 dark:text-sky-200">
+                      {telegramStatusQuery.data?.linked
+                        ? `${telegramStatusQuery.data.selectedCount ?? selectedIds.length} seat alerts active for this election profile.`
+                        : "Tap the icon, open the bot, and press Start once."}
+                    </div>
+                  </div>
+                  <DiagnosticsMini
+                    total={selectedIds.length}
+                    fresh={Object.values(resultFreshnessById).filter((item) => item === "Fresh").length}
+                    cached={Object.values(resultFreshnessById).filter((item) => item === "Cached").length}
+                    stale={Object.values(resultFreshnessById).filter((item) => item === "Stale").length}
+                    failed={resultQueries.filter((query) => query.isError).length}
+                  />
+                  <WhatChangedPanel insights={changeInsights} lastCheckedAt={lastSuccessAt} />
+                </div>
+                <TightRaceSuggestions
+                  suggestions={tightRaceSuggestions}
+                  onAdd={(summary) => {
+                    trackEvent("tight_race_add", {
+                      constituency_id: summary.constituencyId,
+                      margin: summary.margin
+                    });
+                    setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
+                  }}
+                />
+                <SourceConfigPanel
+                  sourceConfig={sourceConfigQuery.data}
+                  activeProfileId={effectiveProfileId}
+                  onUpdated={() => {
+                    setCachedConstituencies([]);
+                    setCachedCandidates([]);
+                    setCachedResults({});
+                    setCachedConstituenciesByProfile((current) => ({ ...current, [effectiveProfileId]: [] }));
+                    setCachedCandidatesByProfile((current) => ({ ...current, [effectiveProfileId]: [] }));
+                    setCachedResultsByProfile((current) => ({ ...current, [effectiveProfileId]: {} }));
+                    setWatchedCandidateIds([]);
+                    void queryClient.invalidateQueries({ queryKey: ["source-config"] });
+                    void queryClient.invalidateQueries({ queryKey: ["constituencies"] });
+                    void queryClient.invalidateQueries({ queryKey: ["summary"] });
+                    void queryClient.invalidateQueries({ queryKey: ["result"] });
+                    void queryClient.invalidateQueries({ queryKey: ["party-summary"] });
+                    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
+                  }}
+                />
+              </div>
+            )}
           </aside>}
 
           <div
@@ -1649,150 +1826,6 @@ export function App() {
               />
             ))}
           </div>
-          {!watchMode && !sidebarCollapsed && (
-            <div id="controls-pane" className="order-3 flex flex-col gap-4 lg:col-start-1 lg:row-start-2">
-              <div className="panel rounded-md p-4">
-                <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="sort">Sort cards</label>
-                <select
-                  id="sort"
-                  className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
-                  value={sortMode}
-                  onChange={(event) => setSortMode(event.target.value as SortMode)}
-                >
-                  <option value="selected">Selected order</option>
-                  <option value="marginAsc">Closest margins first</option>
-                  <option value="marginDesc">Largest leads first</option>
-                  <option value="leader">Leading candidate</option>
-                </select>
-                <label className="mt-3 block text-sm font-semibold text-zinc-700 dark:text-zinc-200" htmlFor="party-filter">Watch group</label>
-                <select
-                  id="party-filter"
-                  className="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
-                  value={partyFilter}
-                  onChange={(event) => setPartyFilter(event.target.value)}
-                >
-                  <option value="all">All selected</option>
-                  <option value="close">Close fights</option>
-                  {partyOptions.map((party) => (
-                    <option key={party} value={party}>{party}</option>
-                  ))}
-                </select>
-                {hiddenByWatchGroupCount > 0 && (
-                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-                    {formatNumber(hiddenByWatchGroupCount)} selected {hiddenByWatchGroupCount === 1 ? "seat is" : "seats are"} hidden by the current watch group.
-                  </div>
-                )}
-                <div className="mt-4 flex gap-2">
-                  <button className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => downloadJson(results)} disabled={!results.length}>
-                    <Download className="mr-2 inline h-4 w-4" />
-                    JSON
-                  </button>
-                  <button className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={() => downloadCsv(results)} disabled={!results.length}>
-                    <Download className="mr-2 inline h-4 w-4" />
-                    CSV
-                  </button>
-                </div>
-                <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
-                  <label className="sr-only" htmlFor="alert-threshold">Close alert margin</label>
-                  <input
-                    id="alert-threshold"
-                    type="number"
-                    min={100}
-                    step={100}
-                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base dark:border-zinc-700 dark:bg-zinc-900 sm:text-sm"
-                    value={alertThreshold}
-                    onChange={(event) => setAlertThreshold(Number(event.target.value.replace(/\D/g, "")) || 1000)}
-                    title="Close alert margin"
-                  />
-                  <button className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700" onClick={shareView} title="Copy share link">
-                    <Share2 className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-1.5">
-                  <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-800 active:scale-[0.98] active:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-200" onClick={() => applySeatPreset("favorites")}>
-                    Key
-                  </button>
-                  <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-amber-500 hover:bg-amber-50 hover:text-amber-800 active:scale-[0.98] active:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-amber-700 dark:hover:bg-amber-950/50 dark:hover:text-amber-200" onClick={() => applySeatPreset("tight")}>
-                    Tight
-                  </button>
-                  <button className="rounded-md border border-zinc-300 px-2 py-1.5 text-[10px] font-black uppercase text-zinc-600 transition hover:border-sky-500 hover:bg-sky-50 hover:text-sky-800 active:scale-[0.98] active:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-500/40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/50 dark:hover:text-sky-200" onClick={() => applySeatPreset("leaders")}>
-                    Leads
-                  </button>
-                </div>
-                <AlertRulesControl rules={alertRules} onChange={setAlertRules} />
-                <WatchProfiles
-                  name={profileName}
-                  profiles={watchProfiles}
-                  onNameChange={setProfileName}
-                  onSave={saveWatchProfile}
-                  onLoad={loadWatchProfile}
-                />
-                <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="text-[11px] font-black uppercase tracking-wide text-sky-800 dark:text-sky-200">Telegram alerts</div>
-                      <div className="mt-1 text-xs font-semibold text-sky-900 dark:text-sky-100">
-                        {telegramStatusQuery.data?.linked
-                          ? `Linked to ${telegramStatusQuery.data.chatLabel || "Telegram"}.`
-                          : "Get lead changes, winners, and tight-race alerts on Telegram."}
-                      </div>
-                    </div>
-                    <button
-                      className="btn-press rounded-md border border-sky-300 bg-white px-3 py-2 text-xs font-black uppercase text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
-                      onClick={() => telegramLinkMutation.mutate()}
-                      disabled={telegramLinkMutation.isPending || !effectiveProfileId}
-                      type="button"
-                      title="Get Telegram alerts"
-                    >
-                      <TelegramIcon className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="mt-2 text-[11px] text-sky-800 dark:text-sky-200">
-                    {telegramStatusQuery.data?.linked
-                      ? `${telegramStatusQuery.data.selectedCount ?? selectedIds.length} seat alerts active for this election profile.`
-                      : "Tap the icon, open the bot, and press Start once."}
-                  </div>
-                </div>
-                <DiagnosticsMini
-                  total={selectedIds.length}
-                  fresh={Object.values(resultFreshnessById).filter((item) => item === "Fresh").length}
-                  cached={Object.values(resultFreshnessById).filter((item) => item === "Cached").length}
-                  stale={Object.values(resultFreshnessById).filter((item) => item === "Stale").length}
-                  failed={resultQueries.filter((query) => query.isError).length}
-                />
-                <WhatChangedPanel insights={changeInsights} lastCheckedAt={lastSuccessAt} />
-              </div>
-              <TightRaceSuggestions
-                suggestions={tightRaceSuggestions}
-                onAdd={(summary) => {
-                  trackEvent("tight_race_add", {
-                    constituency_id: summary.constituencyId,
-                    margin: summary.margin
-                  });
-                  setSelectedIds((current) => current.includes(summary.constituencyId) ? current : [...current, summary.constituencyId]);
-                }}
-              />
-              <SourceConfigPanel
-                sourceConfig={sourceConfigQuery.data}
-                activeProfileId={effectiveProfileId}
-                onUpdated={() => {
-                  setCachedConstituencies([]);
-                  setCachedCandidates([]);
-                  setCachedResults({});
-                  setCachedConstituenciesByProfile((current) => ({ ...current, [effectiveProfileId]: [] }));
-                  setCachedCandidatesByProfile((current) => ({ ...current, [effectiveProfileId]: [] }));
-                  setCachedResultsByProfile((current) => ({ ...current, [effectiveProfileId]: {} }));
-                  setWatchedCandidateIds([]);
-                  void queryClient.invalidateQueries({ queryKey: ["source-config"] });
-                  void queryClient.invalidateQueries({ queryKey: ["constituencies"] });
-                  void queryClient.invalidateQueries({ queryKey: ["summary"] });
-                  void queryClient.invalidateQueries({ queryKey: ["result"] });
-                  void queryClient.invalidateQueries({ queryKey: ["party-summary"] });
-                  void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-                }}
-              />
-            </div>
-          )}
           {!watchMode && (
             <div className="order-4 grid gap-3 md:hidden">
               <DashboardMetrics selectedCount={selectedIds.length} countdown={countdown} lastSuccessAt={lastSuccessAt} sourceHealth={sourceHealth} />
@@ -1800,6 +1833,87 @@ export function App() {
           )}
         </div>
       </section>
+      {!watchMode && (
+        <section className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/60">
+          <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+            <div className="rounded-md border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+              <h1 className="text-3xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-4xl">
+                Kerala Election Result 2026 Live
+              </h1>
+              <div className="mt-4 grid gap-4 text-sm leading-7 text-zinc-600 dark:text-zinc-300 lg:grid-cols-3">
+                <div>
+                  <h2 className="text-base font-black text-zinc-950 dark:text-white">What this app does</h2>
+                  <p className="mt-2">
+                    OneKerala Results helps users follow assembly election results in a cleaner, faster, and more focused format with live constituency cards, battleground tracking, prediction context, and shareable updates.
+                  </p>
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-zinc-950 dark:text-white">Constituency tracking</h2>
+                  <p className="mt-2">
+                    Track specific constituencies, hometown seats, close contests, and candidate watchlists without getting lost inside a large statewide result board.
+                  </p>
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-zinc-950 dark:text-white">Live updates</h2>
+                  <p className="mt-2">
+                    The app refreshes live result data from publicly available official election result sources wherever available, highlights margin changes, and keeps party summary and battleground information easy to scan.
+                  </p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-7 text-zinc-600 dark:text-zinc-300">
+                This is an independent, official-source-based election tracker designed to make constituency wise results more understandable on mobile and desktop.
+              </p>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <CrawlableLinkSection
+                title="Top constituencies"
+                description="Frequently followed seats with direct constituency result pages."
+                items={topSeoConstituencies.map((item) => ({ label: item.constituencyName, href: buildConstituencyPath(activeProfile?.stateName, item.constituencyName) }))}
+                onNavigate={navigateToPath}
+              />
+              <CrawlableLinkSection
+                title="Popular constituencies"
+                description="Browse direct links to constituency level election result pages."
+                items={popularSeoConstituencies.map((item) => ({ label: item.constituencyName, href: buildConstituencyPath(activeProfile?.stateName, item.constituencyName) }))}
+                onNavigate={navigateToPath}
+              />
+              <CrawlableLinkSection
+                title="Battleground seats"
+                description="Live close contests and tight races with dedicated constituency pages."
+                items={battlegroundSeoConstituencies.map((item) => ({ label: item.constituencyName, href: buildConstituencyPath(activeProfile?.stateName, item.constituencyName) }))}
+                onNavigate={navigateToPath}
+              />
+            </div>
+
+            {allSeoConstituencies.length > 0 && (
+              <details className="rounded-md border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                <summary className="cursor-pointer list-none text-base font-black text-zinc-950 dark:text-white">
+                  All constituencies
+                </summary>
+                <p className="mt-3 text-sm leading-7 text-zinc-600 dark:text-zinc-300">
+                  Explore crawlable constituency pages for the active election profile.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {allSeoConstituencies.map((item) => (
+                    <a
+                      key={item.constituencyId}
+                      href={buildConstituencyPath(activeProfile?.stateName, item.constituencyName)}
+                      className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-zinc-700 transition hover:border-emerald-500 hover:text-emerald-800 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-emerald-600 dark:hover:text-emerald-300"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        navigateToPath(buildConstituencyPath(activeProfile?.stateName, item.constituencyName));
+                      }}
+                    >
+                      {item.constituencyName}
+                    </a>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        </section>
+      )}
       <Footer navigate={navigateToPath} />
     </main>
       <PartySummaryDock
@@ -4250,6 +4364,41 @@ function ShareCardModal({ payload, onClose }: { payload: ShareCardPayload; onClo
   );
 }
 
+function CrawlableLinkSection({
+  title,
+  description,
+  items,
+  onNavigate
+}: {
+  title: string;
+  description: string;
+  items: Array<{ label: string; href: string }>;
+  onNavigate: (path: string) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <h2 className="text-base font-black text-zinc-950 dark:text-white">{title}</h2>
+      <p className="mt-2 text-sm leading-7 text-zinc-600 dark:text-zinc-300">{description}</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {items.map((item) => (
+          <a
+            key={item.href}
+            href={item.href}
+            className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-zinc-700 transition hover:border-emerald-500 hover:text-emerald-800 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-emerald-600 dark:hover:text-emerald-300"
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate(item.href);
+            }}
+          >
+            {item.label}
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function HelpPage({
   activeProfileTitle,
   refreshSeconds,
@@ -4263,6 +4412,11 @@ function HelpPage({
 }) {
   return (
     <main className="min-h-screen bg-white text-zinc-950 dark:bg-zinc-950 dark:text-white">
+      <SeoMeta
+        title="Election Tracker Help | User Manual & FAQ"
+        description="Complete user manual for the election tracker, including features, alerts, watch mode, admin controls, limitations, and FAQ."
+        path="/?view=help"
+      />
       <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex items-start justify-between gap-4">

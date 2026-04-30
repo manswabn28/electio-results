@@ -1,5 +1,5 @@
-const SITE_NAME = "OneKerala Results";
-const DEFAULT_DESCRIPTION = "Track live assembly election results with constituency-level updates, party summary, battleground races, and shareable result pages.";
+export const SITE_NAME = "OneKerala Results";
+export const DEFAULT_DESCRIPTION = "Track live assembly election results with constituency-level updates, party summary, battleground races, and shareable result pages.";
 
 type SeoInput = {
   title?: string;
@@ -70,7 +70,7 @@ export function applySeo({
   }
 }
 
-function canonicalFor(path: string): string {
+export function canonicalFor(path: string): string {
   const base = import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin;
   return `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
 }

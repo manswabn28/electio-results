@@ -3,7 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { trackPageView } from "./analytics";
 import { ContentCard } from "./ContentCard";
 import { Footer } from "./Footer";
-import { applySeo } from "./seo";
+import { SeoMeta } from "./SeoMeta";
 import { StaticPageHero } from "./StaticPageHero";
 
 type TermsAndConditionsPageProps = {
@@ -199,20 +199,16 @@ export function TermsAndConditionsPage({ onBack, onNavigate }: TermsAndCondition
 
   useEffect(() => {
     const title = "Terms and Conditions | OneKerala Results";
-    const description =
-      "Read the terms and conditions for using OneKerala Results, an independent election results information platform.";
-    applySeo({
-      title,
-      description,
-      path: "/terms-and-conditions",
-      ogTitle: title,
-      ogDescription: description
-    });
     trackPageView(title);
   }, []);
 
   return (
     <div className="min-h-screen bg-zinc-100 text-zinc-950">
+      <SeoMeta
+        title="Terms and Conditions | OneKerala Results"
+        description="Read the terms and conditions for using OneKerala Results, an independent election results information platform."
+        path="/terms-and-conditions"
+      />
       <StaticPageHero
         eyebrow="Terms & Conditions"
         title="Terms and Conditions"

@@ -23,7 +23,8 @@ import {
 } from "lucide-react";
 import type { ConstituencyDetailCandidate, ConstituencyDetailResponse } from "@kerala-election/shared";
 import { fetchConstituencyDetail, shareImageProxyUrl } from "./api";
-import { applySeo } from "./seo";
+import { canonicalFor } from "./seo";
+import { SeoMeta } from "./SeoMeta";
 import { trackPageView } from "./analytics";
 import { Footer } from "./Footer";
 
@@ -69,33 +70,6 @@ export function ConstituencyDetailPage({
   useEffect(() => {
     if (!detail) return;
     const title = `${detail.constituency.name} Election Result ${detail.election.year ?? ""} Live: Candidates, Winner, Margin, Vote Count`.replace(/\s+/g, " ").trim();
-    const description = `Track ${detail.constituency.name} Assembly Election Result ${detail.election.year ?? ""} live with candidate-wise votes, winner, margin, counting updates, prediction meter, and political history.`.replace(/\s+/g, " ").trim();
-    const leading = detail.candidates[0];
-    applySeo({
-      title,
-      description,
-      path: `/constituency/${stateSlug}/${constituencySlug}`,
-      ogTitle: title,
-      ogDescription: description,
-      twitterCard: "summary_large_image",
-      jsonLd: {
-        "@context": "https://schema.org",
-        "@type": "NewsArticle",
-        headline: title,
-        description,
-        mainEntityOfPage: shareUrl,
-        dateModified: detail.election.lastUpdated,
-        about: {
-          "@type": "Event",
-          name: detail.election.name
-        },
-        author: {
-          "@type": "Organization",
-          name: "OneKerala Results"
-        },
-        image: leading?.photoUrl ? shareImageProxyUrl(leading.photoUrl) : undefined
-      }
-    });
     trackPageView(title);
   }, [constituencySlug, detail, shareUrl, stateSlug]);
 
@@ -112,9 +86,72 @@ export function ConstituencyDetailPage({
   const declared = detail.result.declared;
   const prediction = !declared ? calculatePrediction(detail) : undefined;
   const isWatched = watchedIds.includes(detail.constituency.id);
+  const seoTitle = `${detail.constituency.name} Election Result ${detail.election.year ?? ""} Live | Winner, Margin, Candidates`.replace(/\s+/g, " ").trim();
+  const seoDescription = `Track ${detail.constituency.name} Assembly Election Result ${detail.election.year ?? ""} live with candidate-wise votes, winner, margin, counting updates, prediction meter, and political history.`.replace(/\s+/g, " ").trim();
+  const canonicalUrl = canonicalFor(`/constituency/${stateSlug}/${constituencySlug}`);
+  const leadingImage = leader?.photoUrl ? shareImageProxyUrl(leader.photoUrl) : undefined;
+  const detailStructuredData = [
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      name: seoTitle,
+      description: seoDescription,
+      url: canonicalUrl
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Home",
+          item: canonicalFor("/")
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: detail.election.stateName,
+          item: canonicalFor("/")
+        },
+        {
+          "@type": "ListItem",
+          position: 3,
+          name: detail.constituency.name,
+          item: canonicalUrl
+        }
+      ]
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Article",
+      headline: seoTitle,
+      description: seoDescription,
+      mainEntityOfPage: canonicalUrl,
+      dateModified: detail.election.lastUpdated,
+      image: leadingImage ? [leadingImage] : undefined,
+      author: {
+        "@type": "Organization",
+        name: "OneKerala Results"
+      },
+      about: {
+        "@type": "Event",
+        name: detail.election.name
+      }
+    }
+  ];
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
+      <SeoMeta
+        title={seoTitle}
+        description={seoDescription}
+        canonicalUrl={canonicalUrl}
+        path={`/constituency/${stateSlug}/${constituencySlug}`}
+        ogType="article"
+        ogImage={leadingImage}
+        jsonLd={detailStructuredData}
+      />
       <StickyConstituencyHeader
         detail={detail}
         shareUrl={shareUrl}
@@ -158,6 +195,24 @@ export function ConstituencyDetailPage({
         </div>
 
         <ConstituencyHeroBattle detail={detail} />
+
+        <section className="rounded-md border border-white/10 bg-white/5 p-4 sm:p-5">
+          <h2 className="text-lg font-black text-white">Constituency snapshot</h2>
+          <div className="mt-3 grid gap-3 text-sm leading-7 text-zinc-300 sm:grid-cols-2 lg:grid-cols-3">
+            <div><span className="font-black text-white">Constituency:</span> {detail.constituency.name}</div>
+            <div><span className="font-black text-white">District:</span> {detail.constituency.district || "Not listed"}</div>
+            <div><span className="font-black text-white">Current status:</span> {detail.result.statusText}</div>
+            <div><span className="font-black text-white">Margin:</span> {formatNumber(detail.result.margin)} votes</div>
+            <div><span className="font-black text-white">Leading candidate:</span> {leader?.name ?? "Awaiting trend"}</div>
+            <div><span className="font-black text-white">Main opponent:</span> {runnerUp?.name ?? "Awaiting opponent data"}</div>
+          </div>
+          <div className="mt-4 text-sm leading-7 text-zinc-300">
+            <span className="font-black text-white">History summary:</span>{" "}
+            {detail.history.length
+              ? `${detail.history[0]?.party || "Previous winner"} won the last election here, and ${(detail.insights.historicalLean || "historical context").toLowerCase()} frames the current contest.`
+              : "Historical context will appear here as archived election records are available for this constituency."}
+          </div>
+        </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_360px]">
           <div className="space-y-6">

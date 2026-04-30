@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/generate-seo-assets.mjs",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
@@ -17,7 +18,8 @@
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-helmet-async": "^3.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
