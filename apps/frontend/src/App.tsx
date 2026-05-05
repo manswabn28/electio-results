@@ -1454,18 +1454,18 @@ export function App() {
               <p className="hidden text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 sm:block">Official ECI Source</p>
               <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="relative min-w-0">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.16em] text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
                         Election profile
                       </span>
                       {sourceProfiles.length > 1 && (
-                        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
                           {sourceProfiles.length} live assemblies
                         </span>
                       )}
                     </div>
                     <button
-                      className="brand-title group min-w-0 rounded-md border border-emerald-200 bg-white/80 px-3 py-2 text-left text-lg leading-tight text-zinc-950 shadow-sm transition hover:border-emerald-400 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 dark:border-emerald-900 dark:bg-zinc-950/80 dark:text-white dark:hover:border-emerald-700 dark:hover:text-emerald-200 sm:mt-2 sm:text-3xl"
+                      className="brand-title group min-w-0 rounded-md border border-emerald-200 bg-white/80 px-2.5 py-1.5 text-left text-base leading-tight text-zinc-950 shadow-sm transition hover:border-emerald-400 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 dark:border-emerald-900 dark:bg-zinc-950/80 dark:text-white dark:hover:border-emerald-700 dark:hover:text-emerald-200 sm:mt-1 sm:text-2xl"
                       onClick={() => setSourcePickerOpen((current) => !current)}
                       title={sourceProfiles.length > 1 ? "Switch assembly result" : "Focused assembly result"}
                       aria-label={sourceProfiles.length > 1 ? "Switch assembly result" : "Focused assembly result"}
@@ -1474,16 +1474,16 @@ export function App() {
                       <span className="flex items-start gap-3">
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">
-                            {activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"} Live Tracker
+                            {activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"}
                           </span>
                           {sourceProfiles.length > 1 && (
-                            <span className="mt-1 block text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 transition group-hover:text-emerald-800 dark:text-emerald-300 dark:group-hover:text-emerald-200">
+                            <span className="mt-0.5 block text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-700 transition group-hover:text-emerald-800 dark:text-emerald-300 dark:group-hover:text-emerald-200">
                               Switch assembly result
                             </span>
                           )}
                         </span>
                         {sourceProfiles.length > 1 && (
-                          <ArrowDown className={`mt-1 h-5 w-5 shrink-0 text-emerald-700 transition duration-300 dark:text-emerald-300 ${sourcePickerOpen ? "rotate-180" : ""}`} />
+                          <ArrowDown className={`mt-0.5 h-4 w-4 shrink-0 text-emerald-700 transition duration-300 dark:text-emerald-300 ${sourcePickerOpen ? "rotate-180" : ""}`} />
                         )}
                       </span>
                     </button>
