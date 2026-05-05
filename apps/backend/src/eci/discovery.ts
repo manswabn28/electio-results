@@ -346,12 +346,11 @@ function scoreAssemblyStatePage(html: string, count: number, stateName: string):
 
 function inferStateName(text: string, count: number, root = ""): string {
   const haystack = text.replace(/\s+/g, " ");
-  for (const state of ["Kerala", "Tamil Nadu", "West Bengal", "Assam", "Puducherry", "Bihar"]) {
+  for (const state of ["Kerala", "Tamil Nadu", "West Bengal", "Assam", "Puducherry"]) {
     if (new RegExp(state, "i").test(haystack)) return state;
   }
-  if (/resultacgennov2025/i.test(root)) return "Bihar";
+  if (/resultacgenmay2026/i.test(root) && count >= 130 && count <= 150) return "Kerala";
   if (count >= 130 && count <= 150) return "Kerala";
-  if (count >= 240 && count <= 245) return "Bihar";
   if (count >= 220 && count <= 238) return "Tamil Nadu";
   if (count >= 280 && count <= 300) return "West Bengal";
   if (count >= 115 && count <= 135) return "Assam";
@@ -360,7 +359,6 @@ function inferStateName(text: string, count: number, root = ""): string {
 }
 
 function inferElectionTitle(root: string, stateName: string): string {
-  if (/resultacgennov2025/i.test(root)) return `${stateName} Assembly Election 2025`;
   if (/2026/i.test(root)) return `${stateName} Assembly Election 2026`;
   return `${stateName} Assembly Election Results`;
 }

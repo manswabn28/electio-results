@@ -54,6 +54,7 @@ export async function getEffectiveSourceConfig(profileId?: string): Promise<Sour
     baseUrl: new URL(profile.constituencyListUrl).origin,
     constituencyListUrl: profile.constituencyListUrl,
     candidateDetailUrlTemplate: profile.candidateDetailUrlTemplate,
+    partySummaryUrl: profile.partySummaryUrl,
     activeProfileId: profile.profileId
   };
 }
@@ -112,6 +113,7 @@ export async function updateSourceProfiles(profiles: ElectionSourceProfile[], ac
     baseUrl: new URL(active.constituencyListUrl).origin,
     constituencyListUrl: active.constituencyListUrl,
     candidateDetailUrlTemplate: activeTemplate,
+    partySummaryUrl: active.partySummaryUrl,
     activeProfileId: active.profileId,
     profiles: enabledProfiles.map((profile) => profile.profileId === active.profileId ? { ...profile, candidateDetailUrlTemplate: activeTemplate } : profile),
     updatedAt: new Date().toISOString(),
@@ -150,6 +152,7 @@ export async function setActiveSourceProfile(profileId: string): Promise<SourceC
     baseUrl: new URL(active.constituencyListUrl).origin,
     constituencyListUrl: active.constituencyListUrl,
     candidateDetailUrlTemplate: active.candidateDetailUrlTemplate,
+    partySummaryUrl: active.partySummaryUrl,
     activeProfileId: active.profileId,
     updatedAt: new Date().toISOString(),
     updatedBy: "profile-switch"

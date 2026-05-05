@@ -82,6 +82,15 @@ let officialHistoryCatalogPromise: Promise<Record<string, Record<number, Officia
 let prewarmTimer: NodeJS.Timeout | undefined;
 let lastHistoryRequestAt = 0;
 
+export type HistoryImportSummary = {
+  profileId: string;
+  stateName: string;
+  constituencyCount: number;
+  yearsRequested: number[];
+  importedYearCount: number;
+  historyCount: number;
+};
+
 export async function getConstituencyHistories(
   constituencyIds: string[],
   profileId?: string
@@ -109,6 +118,25 @@ export function startHistoryPrewarming(): void {
   prewarmTimer = setInterval(() => {
     void prewarmHistoryCaches();
   }, HISTORY_PREWARM_INTERVAL_MS);
+}
+
+export async function importAllEnabledHistoryArchives(): Promise<HistoryImportSummary[]> {
+  const sourceConfig = await getSourceConfig().catch(() => undefined);
+  const profiles = resolveHistoryProfiles(sourceConfig);
+  const summaries: HistoryImportSummary[] = [];
+  for (const profile of profiles) {
+    summaries.push(await importHistoryArchiveForResolvedProfile(profile));
+  }
+  return summaries;
+}
+
+export async function importHistoryArchiveForProfile(profileId: string): Promise<HistoryImportSummary> {
+  const sourceConfig = await getSourceConfig();
+  const profile = sourceConfig.profiles?.find((item) => item.enabled && item.profileId === profileId);
+  if (!profile) {
+    throw new Error(`History import profile not found: ${profileId}`);
+  }
+  return importHistoryArchiveForResolvedProfile(profile);
 }
 
 async function prewarmHistoryCaches(): Promise<void> {
@@ -145,23 +173,31 @@ function refreshHistoryInBackground(cacheKey: string, profile: ElectionSourcePro
   });
 }
 
-async function loadHistoryForProfile(profile: ElectionSourceProfile): Promise<ConstituencyElectionHistory[]> {
+async function loadHistoryForProfile(
+  profile: ElectionSourceProfile,
+  options?: { forceImport?: boolean }
+): Promise<ConstituencyElectionHistory[]> {
   const constituencies = (await getConstituencies(profile.profileId)).constituencies;
   if (!constituencies.length) return [];
 
   const years = deriveHistoryYears(profile);
   const archiveStateKey = normalizeArchiveStateKey(profile.stateName);
   const archiveStore = await loadHistoryArchiveStore();
+  const forceImport = options?.forceImport ?? false;
 
   for (const year of years) {
-    if (archiveStore.states[archiveStateKey]?.[String(year)]?.rows?.length) continue;
+    const existingYear = archiveStore.states[archiveStateKey]?.[String(year)];
+    if (!forceImport && existingYear?.rows?.length) continue;
     const imported = await importHistoryYear(profile, year);
     if (!imported) {
       logger.warn({ profileId: profile.profileId, state: profile.stateName, year }, "No historical archive data imported for year");
       continue;
     }
     archiveStore.states[archiveStateKey] ??= {};
-    archiveStore.states[archiveStateKey][String(year)] = imported;
+    const shouldReplace = !existingYear?.rows?.length || imported.rows.length >= existingYear.rows.length;
+    if (shouldReplace) {
+      archiveStore.states[archiveStateKey][String(year)] = imported;
+    }
   }
 
   await saveHistoryArchiveStore(archiveStore);
@@ -188,8 +224,7 @@ async function loadHistoryForProfile(profile: ElectionSourceProfile): Promise<Co
     ]);
     const entries = matchedRows
       .map((row) => row.entry)
-      .sort((left, right) => right.year - left.year)
-      .slice(0, 3);
+      .sort((left, right) => right.year - left.year);
 
     return {
       constituencyId: seat.constituencyId,
@@ -201,6 +236,23 @@ async function loadHistoryForProfile(profile: ElectionSourceProfile): Promise<Co
       entries
     } satisfies ConstituencyElectionHistory;
   });
+}
+
+async function importHistoryArchiveForResolvedProfile(profile: ElectionSourceProfile): Promise<HistoryImportSummary> {
+  const histories = await loadHistoryForProfile(profile, { forceImport: true });
+  const yearsRequested = deriveHistoryYears(profile);
+  const archiveStore = await loadHistoryArchiveStore();
+  const archiveStateKey = normalizeArchiveStateKey(profile.stateName);
+  const importedYearCount = yearsRequested.filter((year) => Boolean(archiveStore.states[archiveStateKey]?.[String(year)]?.rows?.length)).length;
+  historyCache.set(`history:${profile.profileId}`, histories);
+  return {
+    profileId: profile.profileId,
+    stateName: profile.stateName,
+    constituencyCount: histories.length,
+    yearsRequested,
+    importedYearCount,
+    historyCount: histories.reduce((sum, history) => sum + history.entries.length, 0)
+  };
 }
 
 async function importHistoryYear(profile: ElectionSourceProfile, year: number): Promise<StoredHistoryYear | undefined> {
@@ -221,11 +273,11 @@ async function importOfficialHistoryYear(profile: ElectionSourceProfile, year: n
   const officialSource = await resolveOfficialHistorySource(profile.stateName, year);
   if (!officialSource) return undefined;
 
-  const firstHtml = await fetchHtml(officialSource.statewiseUrl);
+  const firstHtml = await fetchHistoryHtml(officialSource.statewiseUrl);
   const pageUrls = new Set([officialSource.statewiseUrl, ...parsePaginationUrls(firstHtml, officialSource.statewiseUrl)]);
   const summaries = [];
   for (const pageUrl of pageUrls) {
-    const html = pageUrl === officialSource.statewiseUrl ? firstHtml : await fetchHtml(pageUrl);
+    const html = pageUrl === officialSource.statewiseUrl ? firstHtml : await fetchHistoryHtml(pageUrl);
     summaries.push(...parseStatePage(html, pageUrl, [], false));
   }
   if (!summaries.length) return undefined;
@@ -234,7 +286,7 @@ async function importOfficialHistoryYear(profile: ElectionSourceProfile, year: n
   for (const summary of summaries) {
     if (!summary.sourceUrl) continue;
     try {
-      const detailHtml = await fetchHtml(summary.sourceUrl);
+      const detailHtml = await fetchHistoryHtml(summary.sourceUrl);
       const result = parseConstituencyPage(detailHtml, summary.sourceUrl, summary);
       const leader = result.candidates[0];
       const runner = result.candidates[1];
@@ -340,8 +392,7 @@ function filterRequestedHistories(histories: ConstituencyElectionHistory[], cons
 
 function deriveHistoryYears(profile: ElectionSourceProfile): number[] {
   const inferredCurrentYear = parseElectionYear(profile) ?? new Date().getFullYear();
-  return [1, 2, 3, 4]
-    .map((step) => inferredCurrentYear - step * 5)
+  return Array.from({ length: Math.max(0, Math.floor((inferredCurrentYear - 1950) / 5)) }, (_, index) => inferredCurrentYear - (index + 1) * 5)
     .filter((year) => year >= 1950);
 }
 
@@ -403,12 +454,14 @@ function parseWikipediaElectionRows(html: string, year: number): ParsedHistoryRo
   $("table.wikitable").each((_, table) => {
     const tableText = cleanText($(table).text()).toLowerCase();
     const tableLooksRelevant =
-      tableText.includes("assembly constituency") &&
-      tableText.includes("runner-up") &&
-      tableText.includes("margin");
+      tableText.includes("constituency") &&
+      tableText.includes("margin") &&
+      (
+        tableText.includes("party") ||
+        tableText.includes("runner-up") ||
+        tableText.includes("runner up")
+      );
     if (!tableLooksRelevant) return;
-
-    let inResultsTable = false;
     $(table)
       .find("tr")
       .each((__, row) => {
@@ -416,24 +469,6 @@ function parseWikipediaElectionRows(html: string, year: number): ParsedHistoryRo
           .children("th,td")
           .toArray()
           .map((cell) => cleanText($(cell).text()));
-
-        if (!cells.length) return;
-
-        const normalized = cells.map((cell) => cell.toLowerCase());
-        const looksLikeHeader =
-          normalized.includes("#") ||
-          (
-            normalized.includes("name") &&
-            (normalized.includes("margin") || tableLooksRelevant) &&
-            normalized.some((cell) => cell.includes("winner") || cell === "candidate") &&
-            normalized.some((cell) => cell.includes("runner"))
-          );
-
-        if (looksLikeHeader) {
-          inResultsTable = true;
-          return;
-        }
-        if (!inResultsTable) return;
 
         const parsed = parseWikipediaResultRow(cells, year);
         if (parsed) rows.push(parsed);
@@ -445,36 +480,65 @@ function parseWikipediaElectionRows(html: string, year: number): ParsedHistoryRo
 
 function parseWikipediaResultRow(cells: string[], year: number): ParsedHistoryRow | undefined {
   const compact = cells.map((cell) => cleanText(cell)).filter(Boolean);
-  if (compact.length < 9) return undefined;
+  if (compact.length < 8) return undefined;
   if (!/^\d{1,3}$/.test(compact[0])) return undefined;
   const constituencyName = cleanHistoryConstituencyName(compact[1]);
   if (!constituencyName) return undefined;
 
-  const hasVoteShareColumns = compact.length >= 11;
-  const winnerName = compact[2] || "";
-  const winnerParty = compact[3] || "";
-  const winnerVotes = toNumber(compact[4]);
-  const winnerVoteShare = hasVoteShareColumns ? toPercent(compact[5]) : undefined;
-  const runnerUpName = compact[hasVoteShareColumns ? 6 : 5] || "";
-  const runnerUpParty = compact[hasVoteShareColumns ? 7 : 6] || "";
-  const runnerUpVotes = toNumber(compact[hasVoteShareColumns ? 8 : 7] ?? "0");
-  const margin = toNumber(compact[hasVoteShareColumns ? 10 : 8] ?? "0");
-  if (!winnerName || !winnerParty || !runnerUpName) return undefined;
+  const marginIndex = resolveWikipediaMarginIndex(compact);
+  const margin = toNumber(compact[marginIndex] ?? "0");
+  const body = compact.slice(2, marginIndex);
+  if (looksLikePercentValue(body[0])) {
+    body.shift();
+  }
+
+  const winner = parseWikipediaCandidateBlock(body);
+  if (!winner) return undefined;
+  const runner = parseWikipediaCandidateBlock(body.slice(winner.consumed));
+  if (!runner) return undefined;
+  if (!winner.name || !winner.party || !runner.name) return undefined;
 
   return {
     constituencyName,
     constituencyNumber: compact[0].padStart(3, "0"),
     entry: {
       year,
-      winnerName,
-      party: winnerParty,
-      votes: winnerVotes || undefined,
-      voteSharePercent: winnerVoteShare,
-      runnerUpName,
-      runnerUpParty,
-      runnerUpVotes: runnerUpVotes || undefined,
+      winnerName: winner.name,
+      party: winner.party,
+      votes: winner.votes || undefined,
+      voteSharePercent: winner.voteSharePercent,
+      runnerUpName: runner.name,
+      runnerUpParty: runner.party,
+      runnerUpVotes: runner.votes || undefined,
       margin
     }
+  };
+}
+
+function parseWikipediaCandidateBlock(
+  cells: string[]
+): { name: string; party: string; votes: number; voteSharePercent?: number; consumed: number } | undefined {
+  if (cells.length < 3) return undefined;
+  const name = cells[0] ?? "";
+  const party = cells[1] ?? "";
+  let index = 2;
+
+  while (index < cells.length && !looksLikeVoteCount(cells[index])) {
+    index += 1;
+  }
+
+  if (index >= cells.length) return undefined;
+  const votes = toNumber(cells[index] ?? "0");
+  const voteShareCandidate = cells[index + 1];
+  const voteSharePercent = looksLikePercentValue(voteShareCandidate) ? toPercent(voteShareCandidate) : undefined;
+  const consumed = index + (voteSharePercent !== undefined ? 2 : 1);
+
+  return {
+    name,
+    party,
+    votes,
+    voteSharePercent,
+    consumed
   };
 }
 
@@ -499,8 +563,36 @@ function toNumber(value: string): number {
 }
 
 function toPercent(value: string): number | undefined {
-  const parsed = Number(value.replace(/[^\d.-]/g, ""));
+  const numeric = value.replace(/[^\d.-]/g, "");
+  if (!/\d/.test(numeric)) return undefined;
+  const parsed = Number(numeric);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function looksLikeVoteCount(value: string | undefined): boolean {
+  if (!value) return false;
+  const numeric = value.replace(/[^\d.-]/g, "");
+  if (!/\d/.test(numeric)) return false;
+  const parsed = Number(numeric);
+  return Number.isFinite(parsed) && parsed > 100;
+}
+
+function looksLikePercentValue(value: string | undefined): boolean {
+  if (!value) return false;
+  const numeric = value.replace(/[^\d.-]/g, "");
+  if (!/\d/.test(numeric)) return false;
+  const parsed = Number(numeric);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100;
+}
+
+function resolveWikipediaMarginIndex(cells: string[]): number {
+  const lastIndex = cells.length - 1;
+  const lastValue = cells[lastIndex];
+  const previousValue = cells[lastIndex - 1];
+  if (looksLikePercentValue(lastValue) && looksLikeVoteCount(previousValue)) {
+    return lastIndex - 1;
+  }
+  return lastIndex;
 }
 
 function normalizeHistorySeatName(value: string): string {

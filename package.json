@@ -14,6 +14,7 @@
     "build": "npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/backend && npm run build --workspace @kerala-election/frontend",
     "build:backend": "npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/backend",
     "build:frontend": "npm run build --workspace @kerala-election/shared && npm run build --workspace @kerala-election/frontend",
+    "import:history": "npm run build --workspace @kerala-election/shared && npm run import-history --workspace @kerala-election/backend",
     "typecheck": "npm run build --workspace @kerala-election/shared && npm run typecheck --workspace @kerala-election/backend && npm run typecheck --workspace @kerala-election/frontend",
     "lint": "npm run lint --workspace @kerala-election/backend && npm run lint --workspace @kerala-election/frontend"
   },

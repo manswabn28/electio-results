@@ -87,8 +87,8 @@ Current seeded source values:
 
 ```env
 ECI_BASE_URL=https://results.eci.gov.in
-ECI_CONSTITUENCY_LIST_URL=https://results.eci.gov.in/ResultAcGenNov2025/statewiseS041.htm
-ECI_CANDIDATE_DETAIL_URL_TEMPLATE=https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm
+ECI_CONSTITUENCY_LIST_URL=https://results.eci.gov.in/ResultAcGenMay2026/statewiseS111.htm
+ECI_CANDIDATE_DETAIL_URL_TEMPLATE=https://results.eci.gov.in/ResultAcGenMay2026/candidateswise-S11{constituencyNumber}.htm
 ```
 
 The detail URL template supports:
@@ -113,8 +113,8 @@ curl -X PUT http://localhost:4100/api/admin/source-config \
   -H "Content-Type: application/json" \
   -d '{
     "baseUrl": "https://results.eci.gov.in",
-    "constituencyListUrl": "https://results.eci.gov.in/ResultAcGenNov2025/statewiseS041.htm",
-    "candidateDetailUrlTemplate": "https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm",
+    "constituencyListUrl": "https://results.eci.gov.in/ResultAcGenMay2026/statewiseS111.htm",
+    "candidateDetailUrlTemplate": "https://results.eci.gov.in/ResultAcGenMay2026/candidateswise-S11{constituencyNumber}.htm",
     "refreshIntervalSeconds": 30
   }'
 ```
@@ -154,10 +154,10 @@ Responses use the shared models in `packages/shared/src/index.ts`.
 
 1. The backend reads the runtime source config from `data/source-config.json`, falling back to environment values.
 2. It fetches `constituencyListUrl`.
-3. The parser discovers ECI pagination links such as `statewiseS041.htm` through `statewiseS0413.htm` and fetches every page in the grid.
+3. The parser discovers ECI pagination links such as `statewiseS111.htm` through the matching event pagination pages and fetches every page in the grid.
 4. The parser extracts constituency numbers and names from each table page, then deduplicates by constituency number.
 5. For every parsed constituency number, the backend builds the candidate-detail URL from `candidateDetailUrlTemplate`.
-6. Example: template `https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm` and constituency number `2` maps to `https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S042.htm`.
+6. Example: template `https://results.eci.gov.in/ResultAcGenMay2026/candidateswise-S11{constituencyNumber}.htm` and constituency number `2` maps to `https://results.eci.gov.in/ResultAcGenMay2026/candidateswise-S112.htm`.
 7. When a tracked constituency is refreshed, the backend fetches that mapped detail page and extracts candidate results.
 
 ## Parsing Strategy

@@ -297,26 +297,28 @@ export async function getPartySummary(profileId?: string): Promise<PartySummaryR
 
 async function refreshPartySummary(cacheKey: string, profileId?: string): Promise<PartySummaryResponse> {
   const sourceConfig = await getEffectiveSourceConfig(profileId);
-  const listUrl = resolveConfiguredUrl(sourceConfig, sourceConfig.constituencyListUrl);
-  const indexUrl = new URL("index.htm", listUrl).toString();
+  const fallbackUrl = new URL("index.htm", resolveConfiguredUrl(sourceConfig, sourceConfig.constituencyListUrl)).toString();
+  const partySummaryUrl = sourceConfig.partySummaryUrl
+    ? resolveConfiguredUrl(sourceConfig, sourceConfig.partySummaryUrl)
+    : fallbackUrl;
   try {
-    const html = await fetchHtml(indexUrl);
+    const html = await fetchHtml(partySummaryUrl);
     const parties = parsePartySummaryPage(html);
     if (!parties.length) {
-      throw Object.assign(new Error("No party summary rows parsed from ECI index page."), {
+      throw Object.assign(new Error("No party summary rows parsed from the configured ECI party summary page."), {
         statusCode: 502,
         code: "ECI_UNEXPECTED_HTML"
       });
     }
     const value = {
       generatedAt: new Date().toISOString(),
-      sourceUrl: indexUrl,
+      sourceUrl: partySummaryUrl,
       parties
     };
     cache.set(cacheKey, value);
     return value;
   } catch (error) {
-    logger.error({ error, sourceUrl: indexUrl }, "Failed to parse party summary page");
+    logger.error({ error, sourceUrl: partySummaryUrl }, "Failed to parse party summary page");
     throw error;
   }
 }

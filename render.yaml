@@ -8,7 +8,7 @@ services:
     rootDir: .
     plan: free
     region: singapore
-    buildCommand: npm ci && npm run build:backend
+    buildCommand: npm ci && npm run import:history && npm run build:backend
     startCommand: npm run start --workspace @kerala-election/backend
     healthCheckPath: /api/health
     envVars:
@@ -19,9 +19,9 @@ services:
       - key: ECI_BASE_URL
         value: https://results.eci.gov.in
       - key: ECI_CONSTITUENCY_LIST_URL
-        value: https://results.eci.gov.in/ResultAcGenNov2025/statewiseS041.htm
+        value: https://results.eci.gov.in/ResultAcGenMay2026/statewiseS111.htm
       - key: ECI_CANDIDATE_DETAIL_URL_TEMPLATE
-        value: https://results.eci.gov.in/ResultAcGenNov2025/candidateswise-S04{constituencyNumber}.htm
+        value: https://results.eci.gov.in/ResultAcGenMay2026/candidateswise-S11{constituencyNumber}.htm
       - key: ECI_ELECTION_PATH
         value: ""
       - key: ECI_KERALA_STATE_PAGE

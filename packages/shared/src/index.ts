@@ -128,6 +128,7 @@ export type SourceConfig = {
   baseUrl: string;
   constituencyListUrl: string;
   candidateDetailUrlTemplate: string;
+  partySummaryUrl?: string;
   refreshIntervalSeconds: number;
   hidePreviewBanner: boolean;
   hideCountdown: boolean;
@@ -141,6 +142,7 @@ export type PublicSourceConfig = {
   baseUrl: string;
   constituencyListUrl: string;
   candidateDetailUrlTemplate: string;
+  partySummaryUrl?: string;
   refreshIntervalSeconds: number;
   hidePreviewBanner: boolean;
   hideCountdown: boolean;
