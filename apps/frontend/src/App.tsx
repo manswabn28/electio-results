@@ -28,6 +28,8 @@ const TIGHT_RACE_NOTIFY_MIN_PROGRESS = 25;
 const ADMIN_PASSWORD = "ldfudf#2026";
 const KERALA_COUNTING_START_AT = "2026-05-04T06:00:00+05:30";
 const VICTORY_OVERLAY_AUTO_CLOSE_MS = 18000;
+const ALERT_DEFAULTS_VERSION = "kerala-election:alert-defaults-v2";
+const PROFILE_SWITCHER_HINT_KEY = "kerala-election:profile-switcher-hint-dismissed";
 const HOME_SEO_TITLE = "Kerala Election Result 2026 Live | Constituency Wise Results";
 const HOME_SEO_DESCRIPTION = "Track Kerala Assembly Election Result 2026 live with constituency-wise results, candidates, winning margin, party tally, battleground seats, and live updates.";
 
@@ -136,7 +138,7 @@ export function App() {
   const appView: AppView = appRoute.kind === "help" ? "help" : "dashboard";
   const [selectedIds, setSelectedIds] = useLocalStorageState<string[]>(SELECTED_STORAGE_KEY, []);
   const [hasBootstrappedFavorites, setHasBootstrappedFavorites] = useState(() =>
-    localStorage.getItem(SELECTED_STORAGE_KEY) !== null
+    safeLocalStorageHas(SELECTED_STORAGE_KEY)
   );
   const [sortMode, setSortMode] = useLocalStorageState<SortMode>("kerala-election:sort-mode", "marginAsc");
   const [darkMode, setDarkMode] = useLocalStorageState<boolean>("kerala-election:dark-mode", true);
@@ -164,10 +166,17 @@ export function App() {
   const [alertThreshold, setAlertThreshold] = useLocalStorageState<number>("kerala-election:alert-threshold", 1000);
   const [alertRules, setAlertRules] = useLocalStorageState<AlertRules>("kerala-election:alert-rules", {
     leaderChange: true,
-    winnerDeclared: true,
+    winnerDeclared: false,
     highTightRace: true,
     candidateWatch: true
   });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.localStorage.getItem(ALERT_DEFAULTS_VERSION)) return;
+    setAlertRules((current) => ({ ...current, winnerDeclared: false }));
+    window.localStorage.setItem(ALERT_DEFAULTS_VERSION, "1");
+  }, [setAlertRules]);
+
   const [watchProfiles, setWatchProfiles] = useLocalStorageState<WatchProfile[]>("kerala-election:watch-profiles", []);
   const [profileName, setProfileName] = useLocalStorageState<string>("kerala-election:profile-name", "My watchlist");
   const [seenCandidateWatchIds, setSeenCandidateWatchIds] = useLocalStorageState<string[]>("kerala-election:seen-candidate-watch-alerts", []);
@@ -182,6 +191,7 @@ export function App() {
   const [selectedLiveChannelId, setSelectedLiveChannelId] = useLocalStorageState<string>("kerala-election:live-audio-channel", "reporter-tv");
   const [activeProfileId, setActiveProfileId] = useLocalStorageState<string>("kerala-election:active-source-profile", "");
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const [profileSwitcherHintDismissed, setProfileSwitcherHintDismissed] = useLocalStorageState<boolean>(PROFILE_SWITCHER_HINT_KEY, false);
   const lowBandwidthMode = typeof navigator !== "undefined" && "connection" in navigator && Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData);
   const [toast, setToast] = useState("");
   const [winnerToasts, setWinnerToasts] = useState<WinnerNotification[]>([]);
@@ -291,7 +301,7 @@ export function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const seats = params.get("seats");
-    if (seats && localStorage.getItem(SELECTED_STORAGE_KEY) === null) {
+    if (seats && !safeLocalStorageHas(SELECTED_STORAGE_KEY)) {
       setSelectedIds(seats.split(",").map((seat) => seat.trim()).filter(Boolean));
       setHasBootstrappedFavorites(true);
     }
@@ -336,6 +346,7 @@ export function App() {
   const activeProfile = useMemo(() => {
     return sourceProfiles.find((profile) => profile.profileId === effectiveProfileId);
   }, [effectiveProfileId, sourceProfiles]);
+  const showProfileSwitcherHint = sourceProfiles.length > 1 && !profileSwitcherHintDismissed && !sourcePickerOpen;
   const routedProfile = useMemo(() => {
     if (appRoute.kind !== "constituency") return undefined;
     return sourceProfiles.find((profile) => slugify(profile.stateName) === appRoute.stateSlug);
@@ -761,6 +772,7 @@ export function App() {
   }, [alertRules.winnerDeclared, allSummaryQuery.data?.results, effectiveProfileId, seenWinnerIds, setSeenWinnerIds, soundEnabled]);
 
   useEffect(() => {
+    if (!alertRules.winnerDeclared) return;
     const closeDeclaredLosses = liveResults.filter((result) => {
       if (!isDeclaredWinner(result.statusText || result.roundStatus)) return false;
       if (result.margin > TIGHT_MARGIN_LIMIT) return false;
@@ -783,9 +795,9 @@ export function App() {
           margin: result.margin,
           winnerName: result.leadingCandidate || result.candidates[0]?.candidateName || "-"
         });
-      }, index * 4500);
-    });
-  }, [alertThreshold, liveResults, seenLostIds, setSeenLostIds]);
+        }, index * 4500);
+      });
+  }, [alertRules.winnerDeclared, alertThreshold, liveResults, seenLostIds, setSeenLostIds]);
 
   useEffect(() => {
     if (!results.length) return;
@@ -1441,19 +1453,58 @@ export function App() {
             <div className="min-w-0">
               <p className="hidden text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 sm:block">Official ECI Source</p>
               <div className="flex min-w-0 items-start justify-between gap-3">
-                <div className="relative min-w-0">
-                  <button
-                    className="brand-title min-w-0 rounded-md text-left text-lg leading-tight text-zinc-950 transition hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 dark:text-white dark:hover:text-emerald-200 sm:mt-2 sm:text-3xl"
-                    onClick={() => setSourcePickerOpen((current) => !current)}
-                    title="Change focused assembly result"
-                    aria-label="Change focused assembly result"
-                    type="button"
-                  >
-                    {activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"} Live Tracker
-                  </button>
-                  {sourcePickerOpen && (
-                    <SourceProfilePicker
-                      profiles={sourceProfiles}
+                  <div className="relative min-w-0">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
+                        Election profile
+                      </span>
+                      {sourceProfiles.length > 1 && (
+                        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                          {sourceProfiles.length} live assemblies
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      className="brand-title group min-w-0 rounded-md border border-emerald-200 bg-white/80 px-3 py-2 text-left text-lg leading-tight text-zinc-950 shadow-sm transition hover:border-emerald-400 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 dark:border-emerald-900 dark:bg-zinc-950/80 dark:text-white dark:hover:border-emerald-700 dark:hover:text-emerald-200 sm:mt-2 sm:text-3xl"
+                      onClick={() => setSourcePickerOpen((current) => !current)}
+                      title={sourceProfiles.length > 1 ? "Switch assembly result" : "Focused assembly result"}
+                      aria-label={sourceProfiles.length > 1 ? "Switch assembly result" : "Focused assembly result"}
+                      type="button"
+                    >
+                      <span className="flex items-start gap-3">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {activeProfile?.electionTitle || sourceConfigQuery.data?.activeTitle || "Assembly Election"} Live Tracker
+                          </span>
+                          {sourceProfiles.length > 1 && (
+                            <span className="mt-1 block text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 transition group-hover:text-emerald-800 dark:text-emerald-300 dark:group-hover:text-emerald-200">
+                              Switch assembly result
+                            </span>
+                          )}
+                        </span>
+                        {sourceProfiles.length > 1 && (
+                          <ArrowDown className={`mt-1 h-5 w-5 shrink-0 text-emerald-700 transition duration-300 dark:text-emerald-300 ${sourcePickerOpen ? "rotate-180" : ""}`} />
+                        )}
+                      </span>
+                    </button>
+                    {showProfileSwitcherHint && (
+                      <button
+                        className="mt-2 inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50/95 px-3 py-2 text-left text-xs font-semibold text-emerald-950 shadow-sm transition hover:border-emerald-400 dark:border-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-100"
+                        onClick={() => {
+                          setProfileSwitcherHintDismissed(true);
+                          setSourcePickerOpen(true);
+                        }}
+                        type="button"
+                        title="Open election switcher"
+                        aria-label="Open election switcher"
+                      >
+                        <span>You can switch between live assembly results here.</span>
+                        <ChevronRight className="h-4 w-4 shrink-0" />
+                      </button>
+                    )}
+                    {sourcePickerOpen && (
+                      <SourceProfilePicker
+                        profiles={sourceProfiles}
                       activeProfileId={effectiveProfileId}
                       onSelect={(profile) => void switchSourceProfile(profile)}
                     />
@@ -6735,7 +6786,9 @@ function shortPartyName(value: string) {
 }
 
 function partyLookupKey(value: string) {
-  return normalizeKeyPart(shortPartyName(value || "").trim());
+  const trimmed = (value || "").trim();
+  const fullName = trimmed.replace(/\s-\s[^-]+$/, "").trim();
+  return normalizeKeyPart(fullName || shortPartyName(trimmed));
 }
 
 function normalizeKeyPart(value: string) {
@@ -6744,6 +6797,15 @@ function normalizeKeyPart(value: string) {
 
 function normalizeCandidateName(value: string) {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function safeLocalStorageHas(key: string) {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(key) !== null;
+  } catch {
+    return false;
+  }
 }
 
 

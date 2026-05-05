@@ -4,8 +4,14 @@ let sharedAudioContext: AudioContext | undefined;
 
 export function useLocalStorageState<T>(key: string, fallback: T | (() => T)) {
   const [value, setValue] = useState<T>(() => {
-    const stored = localStorage.getItem(key);
     const fallbackValue = typeof fallback === "function" ? (fallback as () => T)() : fallback;
+    if (typeof window === "undefined") return fallbackValue;
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(key);
+    } catch {
+      return fallbackValue;
+    }
     if (!stored) return fallbackValue;
     try {
       return JSON.parse(stored) as T;
@@ -15,7 +21,12 @@ export function useLocalStorageState<T>(key: string, fallback: T | (() => T)) {
   });
 
   useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(value));
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // Ignore storage write failures so the app keeps rendering.
+    }
   }, [key, value]);
 
   return [value, setValue] as const;
